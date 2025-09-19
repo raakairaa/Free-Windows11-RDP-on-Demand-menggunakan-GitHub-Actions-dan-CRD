@@ -1,0 +1,63 @@
+name: Simple SSH Server with Tailscale (Dual User, Linger Enabled)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ssh-via-tailscale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 43200
+
+    steps:
+      - name: Install Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          tags: tag:ci
+
+      - name: Setup SSH server for dual users (runner & airaacheisyaa)
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y openssh-server openssl
+
+          # --- Konfigurasi User 'runner' (sebagai fallback) ---
+          SSH_PASSWORD_RUNNER=$(openssl rand -base64 12)
+          echo "runner:$SSH_PASSWORD_RUNNER" | sudo chpasswd
+
+          # --- Konfigurasi User 'airaacheisyaa' (pengguna utama Anda) ---
+          # 1. Buat pengguna baru dengan home directory
+          sudo useradd -m -s /bin/bash airaacheisyaa
+          # 2. Beri password acak
+          SSH_PASSWORD_AIRAA=$(openssl rand -base64 12)
+          echo "airaacheisyaa:$SSH_PASSWORD_AIRAA" | sudo chpasswd
+          # 3. Beri hak sudo agar bisa menginstal software
+          sudo usermod -aG sudo airaacheisyaa
+          # 4. LANGKAH KUNCI: Aktifkan 'linger' agar sesi pengguna persisten
+          sudo loginctl enable-linger airaacheisyaa
+
+          # Pastikan login dengan password diizinkan
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sudo systemctl restart ssh || sudo service ssh restart || true
+
+          echo "================================================="
+          echo "                 DETAIL LOGIN SSH                "
+          echo "================================================="
+          echo "Host (IP Tailscale): $(tailscale ip -4 || echo 'tidak tersedia yet')"
+          echo ""
+          echo "--- Login Pengguna Utama (disarankan) ---"
+          echo "User: airaacheisyaa"
+          echo "Password: $SSH_PASSWORD_AIRAA"
+          echo ""
+          echo "--- Login Fallback ---"
+          echo "User: runner"
+          echo "Password: $SSH_PASSWORD_RUNNER"
+          echo "================================================="
+
+      - name: Keep workflow running
+        run: |
+          echo "Workflow akan terus berjalan. Gunakan detail login di atas untuk SSH."
+          # Loop sederhana untuk menjaga job tetap aktif
+          while true; do sleep 60; done
