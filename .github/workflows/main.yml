@@ -1,81 +1,62 @@
-name: Kairaa CRD Linux (Guaranteed Success)
+name: AiraaCheisyaa CRD
 
 on:
   workflow_dispatch:
-    inputs:
-      crd_auth_code:
-        description: 'Tempel Kode Otorisasi CRD untuk Debian Linux di sini'
-        required: true
-        type: string
 
 jobs:
-  secure-crd:
-    # --- PERUBAHAN PALING KRUSIAL DAN AMPUH ---
-    # Kita secara eksplisit meminta Ubuntu 22.04 LTS, yang dijamin
-    # didukung sepenuhnya oleh Chrome Remote Desktop.
-    runs-on: ubuntu-22.04
-
+  build:
+    runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install CRD and Desktop via Official Google Repository
+      - name: Create User AiraaCheisyaa
         run: |
-          # Metode ini akan berhasil di Ubuntu 22.04
-          
-          # 1. Unduh dan impor kunci penandatanganan paket Google
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg
-          
-          # 2. Tambahkan Repositori Google Chrome ke daftar sumber apt
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-          
-          # 3. Perbarui daftar paket untuk menyertakan paket dari repositori baru
-          sudo apt-get update
-          
-          # 4. Instal CRD dan XFCE. apt sekarang PASTI akan menemukan paketnya.
-          sudo apt-get install --assume-yes chrome-remote-desktop xfce4 desktop-base dbus-x11 xscreensaver
-          
-          echo "Instalasi melalui repositori resmi di Ubuntu 22.04 selesai."
+          $password = "ChangeThisPassword123!"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "User for CRD"
+          Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "AiraaCheisyaa"
+          echo "WINDOWS_USER=AiraaCheisyaa" >> $env:GITHUB_ENV
+          echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
-      - name: Verify CRD Installation
+      - name: Download and Install Chrome Remote Desktop
         run: |
-          # Verifikasi ini sekarang akan berhasil.
-          ls -l /opt/google/chrome-remote-desktop/crd-auth
-          echo "Instalasi CRD berhasil diverifikasi."
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd_installer.msi"
+          Start-Process msiexec.exe -Wait -ArgumentList '/i crd_installer.msi /qn'
 
-      - name: Configure and Authorize Chrome Remote Desktop
+      - name: Generate CRD Setup Command
         run: |
-          CRD_USER=$(whoami)
-          echo "Mengkonfigurasi untuk pengguna: $CRD_USER"
+          $PIN = "123456" # Anda bisa mengubah PIN default ini
+          $HostName = "gh-runner-${{ github.run_id }}"
+          $CRD_Command = '& "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="PASTE_YOUR_AUTH_CODE_HERE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name="' + $HostName + '" -pin="' + $PIN + '"'
           
-          echo "exec /etc/X11/Xsession /usr/bin/xfce4-session" | sudo tee /home/$CRD_USER/.chrome-remote-desktop-session
-          sudo chown $CRD_USER:$CRD_USER /home/$CRD_USER/.chrome-remote-desktop-session
-          
-          CRD_AUTH_CODE="${{ github.event.inputs.crd_auth_code }}"
-          
-          sudo -u $CRD_USER bash -c "/opt/google/chrome-remote-desktop/crd-auth --code='$CRD_AUTH_CODE'"
+          echo "CRD_SETUP_COMMAND=${CRD_Command}" >> $env:GITHUB_ENV
+          echo "CRD_PIN=${PIN}" >> $env:GITHUB_ENV
 
-          echo "Otorisasi CRD berhasil."
-
-      - name: Start Chrome Remote Desktop Service
+      - name: Display Connection Info and Keep Alive
         run: |
-          sudo systemctl start chrome-remote-desktop@$USER
-          echo "Layanan Chrome Remote Desktop telah dimulai."
+          Write-Host "========================= SETUP INSTRUCTIONS ========================="
+          Write-Host "1. Go to: https://remotedesktop.google.com/headless"
+          Write-Host "2. Sign in and click 'Begin', then 'Next', then 'Authorize'."
+          Write-Host "3. You will get a command for Windows (cmd). Copy ONLY the authorization code."
+          Write-Host "   It looks like this: 4/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          Write-Host ""
+          Write-Host "4. You will need to access the runner to run the final command."
+          Write-Host "   (For example, using a 'debug over tmate' step if you add one)."
+          Write-Host ""
+          Write-Host "5. In a PowerShell terminal on the runner, run the command below"
+          Write-Host "   after replacing 'PASTE_YOUR_AUTH_CODE_HERE' with your code:"
+          Write-Host ""
+          Write-Host "${{ env.CRD_SETUP_COMMAND }}"
+          Write-Host ""
+          Write-Host "=========================== CREDENTIALS ==========================="
+          Write-Host "Windows User: ${{ env.WINDOWS_USER }}"
+          Write-Host "Windows Password: ${{ env.WINDOWS_PASSWORD }}"
+          Write-Host "CRD PIN: ${{ env.CRD_PIN }}"
+          Write-Host "====================================================================="
           
-      - name: Maintain Connection
-        run: |
-          echo -e "\n===================================================================="
-          echo "  VM ANDA SEKARANG SIAP DIAKSES"
-          echo ""
-          echo "  1. Buka browser Anda dan pergi ke:"
-          echo "     https://remotedesktop.google.com/access"
-          echo ""
-          echo "  2. Anda akan melihat runner GitHub ini muncul sebagai mesin online."
-          echo ""
-          echo "  3. Klik untuk terhubung!"
-          echo "====================================================================\n"
-
-          # Jaga agar runner tetap aktif
-          sleep 21600
+          # Keep runner active until manually cancelled
+          while ($true) {
+            Start-Sleep -Seconds 300
+            Write-Host "[$(Get-Date)] Keeping runner alive for Chrome Remote Desktop session."
+          }
