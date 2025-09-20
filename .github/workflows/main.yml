@@ -1,4 +1,4 @@
-name: Kairaa CRD Linux
+name: Kairaa CRD Linux (Robust)
 
 on:
   workflow_dispatch:
@@ -17,13 +17,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install CRD, Desktop Environment, and All Dependencies
+      - name: Install CRD, Desktop, and All Dependencies in One Step
         run: |
           sudo apt-get update
           wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
-          sudo apt install --assume-yes ./chrome-remote-desktop_current_amd64.deb
-          sudo apt install --assume-yes xfce4 desktop-base dbus-x11 xscreensaver
-          echo "Instalasi CRD dan XFCE beserta semua dependensi selesai."
+          
+          # --- PERBAIKAN KRUSIAL: Gabungkan semua instalasi ke dalam satu perintah 'apt' ---
+          # Ini memungkinkan 'apt' untuk menyelesaikan semua dependensi secara bersamaan,
+          # membuatnya jauh lebih andal daripada beberapa perintah terpisah.
+          sudo apt install --assume-yes ./chrome-remote-desktop_current_amd64.deb \
+              xfce4 \
+              desktop-base \
+              dbus-x11 \
+              xscreensaver
+          
+          echo "Instalasi gabungan selesai."
+
+      - name: Verify CRD Installation
+        run: |
+          # --- LANGKAH PENTING: Verifikasi bahwa file kunci benar-benar ada ---
+          # Langkah ini akan gagal jika instalasi sebelumnya tidak berhasil,
+          # memberikan kita diagnosis yang jelas.
+          echo "Memeriksa keberadaan file crd-auth..."
+          ls -l /opt/google/chrome-remote-desktop/crd-auth
+          
+          echo "Verifikasi direktori /opt/google..."
+          ls -l /opt/google
+          
+          echo "Verifikasi direktori /opt/google/chrome-remote-desktop..."
+          ls -l /opt/google/chrome-remote-desktop
+          
+          echo "Instalasi CRD berhasil diverifikasi."
 
       - name: Configure and Authorize Chrome Remote Desktop
         run: |
@@ -34,9 +58,8 @@ jobs:
           sudo chown $CRD_USER:$CRD_USER /home/$CRD_USER/.chrome-remote-desktop-session
           
           CRD_AUTH_CODE="${{ github.event.inputs.crd_auth_code }}"
-
-          # --- PERBAIKAN: Gunakan path absolut untuk menemukan perintah 'crd-auth' ---
-          # Ini memberitahu shell lokasi pasti dari program yang harus dijalankan.
+          
+          # Jalankan perintah otorisasi menggunakan path absolut
           sudo -u $CRD_USER bash -c "/opt/google/chrome-remote-desktop/crd-auth --code='$CRD_AUTH_CODE'"
 
           echo "Otorisasi CRD berhasil."
