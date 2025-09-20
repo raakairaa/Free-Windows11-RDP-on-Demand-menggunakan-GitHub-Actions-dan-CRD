@@ -17,22 +17,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Chrome Remote Desktop and Desktop Environment
+      - name: Install CRD, Desktop Environment, and All Dependencies
         run: |
-          # Perbarui daftar paket dan instal dependensi
+          # Perbarui daftar paket
           sudo apt-get update
-          sudo apt-get install --assume-yes wget software-properties-common
           
-          # Unduh dan instal Chrome Remote Desktop
+          # Unduh paket Chrome Remote Desktop
           wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
-          sudo dpkg --install chrome-remote-desktop_current_amd64.deb
-          # Perbaiki dependensi yang mungkin hilang
-          sudo apt-get install --assume-yes --fix-broken
+          
+          # --- PERBAIKAN: Gunakan 'apt install' untuk menangani dependensi secara otomatis ---
+          # Ini adalah cara yang benar dan modern untuk menginstal file .deb lokal.
+          # apt akan secara otomatis menemukan, mengunduh, dan menginstal semua
+          # dependensi yang hilang (seperti policykit-1, xserver, dll.).
+          sudo apt install --assume-yes ./chrome-remote-desktop_current_amd64.deb
           
           # Instal lingkungan desktop XFCE yang ringan
-          sudo apt-get install --assume-yes xfce4 desktop-base dbus-x11 xscreensaver
+          sudo apt install --assume-yes xfce4 desktop-base dbus-x11 xscreensaver
           
-          echo "Instalasi CRD dan XFCE selesai."
+          echo "Instalasi CRD dan XFCE beserta semua dependensi selesai."
 
       - name: Configure and Authorize Chrome Remote Desktop
         run: |
@@ -41,26 +43,20 @@ jobs:
           echo "Mengkonfigurasi untuk pengguna: $CRD_USER"
 
           # Tentukan XFCE sebagai sesi desktop default untuk CRD
-          # Perintah ini akan membuat file yang memberitahu CRD untuk memulai XFCE
           echo "exec /etc/X11/Xsession /usr/bin/xfce4-session" | sudo tee /home/$CRD_USER/.chrome-remote-desktop-session
           
           # Berikan izin yang benar pada file sesi
           sudo chown $CRD_USER:$CRD_USER /home/$CRD_USER/.chrome-remote-desktop-session
           
-          # --- INI BAGIAN KUNCI UNTUK OTORISASI HEADLESS ---
-          # Ambil kode dari input workflow dan simpan ke variabel
+          # Ambil kode dari input workflow dan jalankan perintah otorisasi
           CRD_AUTH_CODE="${{ github.event.inputs.crd_auth_code }}"
-          
-          # Jalankan perintah otorisasi CRD sebagai pengguna 'runner'
-          # Tanda '--' memastikan argumen setelahnya tidak diinterpretasikan sebagai opsi
           sudo -u $CRD_USER bash -c "crd-auth --code='$CRD_AUTH_CODE'"
 
           echo "Otorisasi CRD berhasil."
 
       - name: Start Chrome Remote Desktop Service
         run: |
-          # Mulai layanan CRD. Layanan ini akan berjalan di latar belakang.
-          # '@%i' akan otomatis digantikan dengan nama pengguna yang menjalankan service.
+          # Mulai layanan CRD
           sudo systemctl start chrome-remote-desktop@$USER
           echo "Layanan Chrome Remote Desktop telah dimulai."
           
@@ -73,10 +69,9 @@ jobs:
           echo "     https://remotedesktop.google.com/access"
           echo ""
           echo "  2. Anda akan melihat runner GitHub ini muncul sebagai mesin online."
-          echo "     (Nama host akan terlihat seperti 'gh-runner-...') "
           echo ""
           echo "  3. Klik untuk terhubung!"
           echo "====================================================================\n"
 
-          # Jaga agar runner tetap aktif selama 6 jam
+          # Jaga agar runner tetap aktif
           sleep 21600
