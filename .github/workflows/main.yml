@@ -1,7 +1,11 @@
-name: AiraaCheisyaa CRD with tmate
+name: AiraaCheisyaa CRD with Input
 
 on:
   workflow_dispatch:
+    inputs:
+      crd_auth_code:
+        description: 'Your CRD Authorization Code (e.g., 4/xxxx...)'
+        required: true
 
 jobs:
   build:
@@ -11,39 +15,27 @@ jobs:
     steps:
       - name: Create User AiraaCheisyaa
         run: |
-          $password = "ChangeThisPassword123!" # Ganti dengan kata sandi yang kuat
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "User for CRD"
+          $password = "ChangeThisPassword123!"
+          New-LocalUser -Name "AiraaCheisyaa" -Password (ConvertTo-SecureString $password -AsPlainText -Force)
           Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "AiraaCheisyaa"
-          echo "WINDOWS_USER=AiraaCheisyaa" >> $env:GITHUB_ENV
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
       - name: Download and Install Chrome Remote Desktop
+        run: Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi" && Start-Process msiexec.exe -Wait -ArgumentList '/i crd.msi /qn'
+      
+      - name: Start Chrome Remote Desktop Host
         run: |
-          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd_installer.msi"
-          Start-Process msiexec.exe -Wait -ArgumentList '/i crd_installer.msi /qn'
-
-      - name: Generate CRD Setup Command Info
-        run: |
-          $PIN = "123456" # Anda bisa mengubah PIN default ini
+          $PIN = "123456"
           $HostName = "gh-runner-${{ github.run_id }}"
-          $CRD_Command = '& "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="PASTE_YOUR_AUTH_CODE_HERE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name="' + $HostName + '" -pin="' + $PIN + '"'
+          $AuthCode = "${{ github.event.inputs.crd_auth_code }}"
+          & "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="$AuthCode" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name="$HostName" -pin="$PIN"
           
-          echo "CRD_SETUP_COMMAND=${CRD_Command}" >> $env:GITHUB_ENV
-          echo "CRD_PIN=${PIN}" >> $env:GITHUB_ENV
-          
-          Write-Host "========================= CREDENTIALS ==========================="
+          Write-Host "=========================== CREDENTIALS ==========================="
+          Write-Host "Host Name: $HostName"
           Write-Host "Windows User: AiraaCheisyaa"
           Write-Host "Windows Password: $env:WINDOWS_PASSWORD"
-          Write-Host "CRD PIN: ${PIN}"
-          Write-Host "================================================================="
-          Write-Host "Command to run in tmate (after getting auth code):"
-          Write-Host $env:CRD_SETUP_COMMAND
+          Write-Host "CRD PIN: $PIN"
+          Write-Host "====================================================================="
 
-      - name: Establish Terminal Connection via tmate
-        uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 350 # Biarkan koneksi terbuka selama hampir 6 jam
-        with:
-          limit-access-to-actor: true # Hanya Anda yang bisa terhubung
-          
+      - name: Keep Runner Alive
+        run: Start-Sleep -Seconds 21000 # Keep alive for ~5.8 hours
