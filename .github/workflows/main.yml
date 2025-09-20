@@ -1,10 +1,10 @@
-name: AiraaCheisyaa CRD with Input
+name: AiraaCheisyaa CRD (Auto Extract Code)
 
 on:
   workflow_dispatch:
     inputs:
-      crd_auth_code:
-        description: 'Your CRD Authorization Code (e.g., 4/xxxx...)'
+      crd_full_command:
+        description: 'Salin dan tempel SELURUH perintah dari halaman CRD Headless (CMD atau PowerShell)'
         required: true
 
 jobs:
@@ -21,13 +21,32 @@ jobs:
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
       - name: Download and Install Chrome Remote Desktop
-        run: Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi" && Start-Process msiexec.exe -Wait -ArgumentList '/i crd.msi /qn'
-      
-      - name: Start Chrome Remote Desktop Host
         run: |
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
+          Start-Process msiexec.exe -Wait -ArgumentList '/i crd.msi /qn'
+      
+      - name: Extract Code and Start Chrome Remote Desktop Host
+        run: |
+          # Mengambil seluruh perintah yang Anda tempel dari input
+          $FullCommand = '${{ github.event.inputs.crd_full_command }}'
+          
+          # Pola untuk mencari kode di antara --code="..."
+          $Pattern = '--code="(.+?)"'
+          
+          $AuthCode = ""
+          if ($FullCommand -match $Pattern) {
+              # Jika pola ditemukan, ambil kodenya
+              $AuthCode = $matches[1]
+              Write-Host "Authorization code extracted successfully."
+          } else {
+              # Jika pola tidak ditemukan, gagalkan alur kerja
+              Write-Error "Could not find authorization code in the provided command. Please paste the full command."
+              exit 1
+          }
+          
+          # Menjalankan perintah dengan kode yang sudah diekstrak
           $PIN = "123456"
           $HostName = "gh-runner-${{ github.run_id }}"
-          $AuthCode = "${{ github.event.inputs.crd_auth_code }}"
           & "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="$AuthCode" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name="$HostName" -pin="$PIN"
           
           Write-Host "=========================== CREDENTIALS ==========================="
