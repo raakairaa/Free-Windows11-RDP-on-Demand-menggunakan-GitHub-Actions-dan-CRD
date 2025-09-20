@@ -1,93 +1,82 @@
-name: Kairaa RDP Linux
+name: Kairaa CRD Linux
 
 on:
   workflow_dispatch:
+    inputs:
+      crd_auth_code:
+        description: 'Tempel Kode Otorisasi CRD untuk Debian Linux di sini'
+        required: true
+        type: string
 
 jobs:
-  secure-rdp:
+  secure-crd:
     runs-on: ubuntu-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360
 
     steps:
-      - name: Install Desktop Environment and RDP Server
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Chrome Remote Desktop and Desktop Environment
         run: |
+          # Perbarui daftar paket dan instal dependensi
           sudo apt-get update
-          sudo apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
-          sudo apt-get install -y xrdp
-          echo "exec startxfce4" | sudo tee /etc/xrdp/startwm.sh
-          sudo systemctl restart xrdp
-          sudo ufw allow 3389/tcp
-          echo "Server RDP dan Desktop Environment berhasil diinstal."
-
-      - name: Configure Runner User for RDP
-        run: |
-          # --- SOLUSI TERBAIK: Menggunakan pengguna bawaan 'runner' ---
-          # Ini lebih sederhana, cepat, dan stabil.
+          sudo apt-get install --assume-yes wget software-properties-common
           
+          # Unduh dan instal Chrome Remote Desktop
+          wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
+          sudo dpkg --install chrome-remote-desktop_current_amd64.deb
+          # Perbaiki dependensi yang mungkin hilang
+          sudo apt-get install --assume-yes --fix-broken
+          
+          # Instal lingkungan desktop XFCE yang ringan
+          sudo apt-get install --assume-yes xfce4 desktop-base dbus-x11 xscreensaver
+          
+          echo "Instalasi CRD dan XFCE selesai."
+
+      - name: Configure and Authorize Chrome Remote Desktop
+        run: |
           # Dapatkan nama pengguna bawaan (yaitu 'runner')
-          RDP_USER=$(whoami)
-          echo "Mengkonfigurasi pengguna bawaan: $RDP_USER"
-          
-          # Buat password yang aman untuk disalin (hanya alfanumerik)
-          password=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)
-          
-          # Atur password untuk pengguna 'runner'
-          echo "$RDP_USER:$password" | sudo chpasswd
-          
-          # Tambahkan pengguna 'runner' ke grup 'ssl-cert' yang diperlukan oleh xrdp
-          sudo adduser $RDP_USER ssl-cert
-          
-          # Ekspor variabel untuk digunakan di langkah selanjutnya
-          echo "RDP_USER=$RDP_USER" >> $GITHUB_ENV
-          echo "RDP_PASS=$password" >> $GITHUB_ENV
-          
-          echo "Pengguna '$RDP_USER' berhasil dikonfigurasi untuk RDP."
+          CRD_USER=$(whoami)
+          echo "Mengkonfigurasi untuk pengguna: $CRD_USER"
 
-      - name: Install Tailscale
-        run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
+          # Tentukan XFCE sebagai sesi desktop default untuk CRD
+          # Perintah ini akan membuat file yang memberitahu CRD untuk memulai XFCE
+          echo "exec /etc/X11/Xsession /usr/bin/xfce4-session" | sudo tee /home/$CRD_USER/.chrome-remote-desktop-session
+          
+          # Berikan izin yang benar pada file sesi
+          sudo chown $CRD_USER:$CRD_USER /home/$CRD_USER/.chrome-remote-desktop-session
+          
+          # --- INI BAGIAN KUNCI UNTUK OTORISASI HEADLESS ---
+          # Ambil kode dari input workflow dan simpan ke variabel
+          CRD_AUTH_CODE="${{ github.event.inputs.crd_auth_code }}"
+          
+          # Jalankan perintah otorisasi CRD sebagai pengguna 'runner'
+          # Tanda '--' memastikan argumen setelahnya tidak diinterpretasikan sebagai opsi
+          sudo -u $CRD_USER bash -c "crd-auth --code='$CRD_AUTH_CODE'"
 
-      - name: Establish Tailscale Connection
-        run: |
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$GITHUB_RUN_ID
-          
-          tsIP=""
-          retries=0
-          while [ -z "$tsIP" ] && [ $retries -lt 10 ]; do
-              tsIP=$(tailscale ip -4)
-              sleep 5
-              retries=$((retries+1))
-          done
-          
-          if [ -z "$tsIP" ]; then
-              echo "Gagal mendapatkan alamat IP Tailscale. Keluar."
-              exit 1
-          fi
-          echo "TAILSCALE_IP=$tsIP" >> $GITHUB_ENV
-      
-      - name: Verify RDP Accessibility
-        run: |
-          echo "Tailscale IP: ${{ env.TAILSCALE_IP }}"
-          
-          # Beri jeda 5 detik agar semua service siap
-          echo "Menunggu 5 detik sebelum memverifikasi port RDP..."
-          sleep 5
-          
-          if ! nc -zv ${{ env.TAILSCALE_IP }} 3389; then
-              echo "Koneksi TCP ke port RDP 3389 gagal."
-              exit 1
-          fi
-          echo "Konektivitas TCP berhasil!"
+          echo "Otorisasi CRD berhasil."
 
+      - name: Start Chrome Remote Desktop Service
+        run: |
+          # Mulai layanan CRD. Layanan ini akan berjalan di latar belakang.
+          # '@%i' akan otomatis digantikan dengan nama pengguna yang menjalankan service.
+          sudo systemctl start chrome-remote-desktop@$USER
+          echo "Layanan Chrome Remote Desktop telah dimulai."
+          
       - name: Maintain Connection
         run: |
-          echo -e "\n=== AKSES RDP ==="
-          echo "Alamat: ${{ env.TAILSCALE_IP }}"
-          echo "Username: ${{ env.RDP_USER }}"
-          echo "Password: ${{ env.RDP_PASS }}"
-          echo "==================\n"
-          
-          while true; do
-              echo "[$(date)] RDP Aktif - Gunakan Ctrl+C di workflow untuk menghentikan"
-              sleep 300
-          done
+          echo -e "\n===================================================================="
+          echo "  VM ANDA SEKARANG SIAP DIAKSES"
+          echo ""
+          echo "  1. Buka browser Anda dan pergi ke:"
+          echo "     https://remotedesktop.google.com/access"
+          echo ""
+          echo "  2. Anda akan melihat runner GitHub ini muncul sebagai mesin online."
+          echo "     (Nama host akan terlihat seperti 'gh-runner-...') "
+          echo ""
+          echo "  3. Klik untuk terhubung!"
+          echo "====================================================================\n"
+
+          # Jaga agar runner tetap aktif selama 6 jam
+          sleep 21600
