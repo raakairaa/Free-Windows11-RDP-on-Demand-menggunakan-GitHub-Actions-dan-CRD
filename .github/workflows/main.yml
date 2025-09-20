@@ -28,6 +28,7 @@ jobs:
         run: |
           $PIN = "123456" # Anda bisa mengubah PIN default ini
           $HostName = "gh-runner-${{ github.run_id }}"
+          # Perintah ini dibuat untuk dieksekusi, jadi formatnya sudah benar.
           $CRD_Command = '& "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="PASTE_YOUR_AUTH_CODE_HERE" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name="' + $HostName + '" -pin="' + $PIN + '"'
           
           echo "CRD_SETUP_COMMAND=${CRD_Command}" >> $env:GITHUB_ENV
@@ -47,12 +48,15 @@ jobs:
           Write-Host "5. In a PowerShell terminal on the runner, run the command below"
           Write-Host "   after replacing 'PASTE_YOUR_AUTH_CODE_HERE' with your code:"
           Write-Host ""
-          Write-Host "${{ env.CRD_SETUP_COMMAND }}"
+          # --- PERUBAHAN DI SINI ---
+          # Menggunakan sintaks PowerShell ($env:) untuk mencetak variabel sebagai string utuh
+          Write-Host $env:CRD_SETUP_COMMAND
+          # ------------------------
           Write-Host ""
           Write-Host "=========================== CREDENTIALS ==========================="
-          Write-Host "Windows User: ${{ env.WINDOWS_USER }}"
-          Write-Host "Windows Password: ${{ env.WINDOWS_PASSWORD }}"
-          Write-Host "CRD PIN: ${{ env.CRD_PIN }}"
+          Write-Host "Windows User: $env:WINDOWS_USER"
+          Write-Host "Windows Password: $env:WINDOWS_PASSWORD"
+          Write-Host "CRD PIN: $env:CRD_PIN"
           Write-Host "====================================================================="
           
           # Keep runner active until manually cancelled
