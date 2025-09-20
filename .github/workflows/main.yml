@@ -15,41 +15,33 @@ jobs:
           sudo apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
           sudo apt-get install -y xrdp
           echo "exec startxfce4" | sudo tee /etc/xrdp/startwm.sh
-          # Tambahkan jeda singkat untuk memastikan service siap sebelum direstart
-          sleep 2
           sudo systemctl restart xrdp
           sudo ufw allow 3389/tcp
           echo "Server RDP dan Desktop Environment berhasil diinstal."
 
-      - name: Create RDP User with Secure and Reliable Password
+      - name: Configure Runner User for RDP
         run: |
-          # --- PERBAIKAN INOVATIF: Membuat password yang aman untuk disalin ---
-          # Menghasilkan password 16 karakter yang hanya terdiri dari huruf dan angka.
-          # Ini menghindari masalah dengan karakter spesial (+, /, =) saat copy-paste.
+          # --- SOLUSI TERBAIK: Menggunakan pengguna bawaan 'runner' ---
+          # Ini lebih sederhana, cepat, dan stabil.
+          
+          # Dapatkan nama pengguna bawaan (yaitu 'runner')
+          RDP_USER=$(whoami)
+          echo "Mengkonfigurasi pengguna bawaan: $RDP_USER"
+          
+          # Buat password yang aman untuk disalin (hanya alfanumerik)
           password=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)
           
-          # Membuat pengguna
-          sudo useradd -m -s /bin/bash airaacheisyaa
-          echo "airaacheisyaa:$password" | sudo chpasswd
+          # Atur password untuk pengguna 'runner'
+          echo "$RDP_USER:$password" | sudo chpasswd
           
-          # Menambahkan pengguna ke grup yang diperlukan
-          sudo adduser airaacheisyaa sudo
-          sudo adduser airaacheisyaa ssl-cert
+          # Tambahkan pengguna 'runner' ke grup 'ssl-cert' yang diperlukan oleh xrdp
+          sudo adduser $RDP_USER ssl-cert
           
-          # --- PENINGKATAN: Memastikan izin direktori home benar ---
-          sudo chown -R airaacheisyaa:airaacheisyaa /home/airaacheisyaa
-          
-          echo "RDP_USER=airaacheisyaa" >> $GITHUB_ENV
+          # Ekspor variabel untuk digunakan di langkah selanjutnya
+          echo "RDP_USER=$RDP_USER" >> $GITHUB_ENV
           echo "RDP_PASS=$password" >> $GITHUB_ENV
           
-          # --- PENINGKATAN: Verifikasi bahwa pengguna telah dibuat ---
-          echo "Verifikasi pengguna..."
-          if getent passwd airaacheisyaa > /dev/null; then
-            echo "Pengguna 'airaacheisyaa' berhasil dibuat dan diverifikasi."
-          else
-            echo "ERROR: Gagal membuat pengguna 'airaacheisyaa'."
-            exit 1
-          fi
+          echo "Pengguna '$RDP_USER' berhasil dikonfigurasi untuk RDP."
 
       - name: Install Tailscale
         run: |
@@ -77,7 +69,7 @@ jobs:
         run: |
           echo "Tailscale IP: ${{ env.TAILSCALE_IP }}"
           
-          # Beri jeda 5 detik sebelum tes koneksi untuk memastikan semua service siap
+          # Beri jeda 5 detik agar semua service siap
           echo "Menunggu 5 detik sebelum memverifikasi port RDP..."
           sleep 5
           
