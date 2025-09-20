@@ -1,4 +1,4 @@
-name: AiraaCheisyaa CRD (Auto Extract Code)
+name: AiraaCheisyaa CRD (VirtualBox & Performance Boost)
 
 on:
   workflow_dispatch:
@@ -20,40 +20,65 @@ jobs:
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
         shell: pwsh
 
-      - name: Download and Install Essential Software
+      - name: Install Pre-requisite Software
         run: |
           Write-Host "Mengunduh dan menginstal Visual Studio Code..."
           Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile "$env:TEMP\vscode_installer.exe"
           Start-Process -FilePath "$env:TEMP\vscode_installer.exe" -ArgumentList '/verysilent /mergetasks=!runcode' -Wait
-
+          
+          Write-Host "📦 Mengunduh dan menginstal Oracle VirtualBox..."
+          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.2.2/VirtualBox-7.2.2-170484-Win.exe" -OutFile "$env:TEMP\virtualbox_installer.exe"
+          Start-Process -FilePath "$env:TEMP\virtualbox_installer.exe" -ArgumentList '--silent --ignore-reboot' -Wait
+          
           Write-Host "Mengunduh dan menginstal Chrome Remote Desktop..."
           Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
           Start-Process msiexec.exe -Wait -ArgumentList '/i crd.msi /qn'
         shell: pwsh
       
-      - name: Extract Code and Start Chrome Remote Desktop Host
+      - name: 🚀 Apply Performance Tweaks & Optimizations
         run: |
-          # Mengambil seluruh perintah yang Anda tempel dari input
+          Write-Host "Applying system optimizations for a smoother RDP experience..."
+          powercfg /s SCHEME_MIN
+          Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2
+          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue | Out-Null
+          Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue | Out-Null
+          Set-Service -Name WSearch -StartupType Disabled -ErrorAction SilentlyContinue | Out-Null
+          Write-Host "System optimizations applied successfully!"
+        shell: pwsh
+
+      - name: Start CRD and Boost Process Priority
+        run: |
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
-          
-          # Pola untuk mencari kode di antara --code="..."
           $Pattern = '--code="(.+?)"'
           
-          $AuthCode = ""
           if ($FullCommand -match $Pattern) {
-              # Jika pola ditemukan, ambil kodenya
               $AuthCode = $matches[1]
               Write-Host "Authorization code extracted successfully."
           } else {
-              # Jika pola tidak ditemukan, gagalkan alur kerja
               Write-Error "Could not find authorization code in the provided command. Please paste the full command."
               exit 1
           }
           
-          # Menjalankan perintah dengan kode yang sudah diekstrak
           $PIN = "123456"
           $HostName = "gh-runner-${{ github.run_id }}"
-          & "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="$AuthCode" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name="$HostName" -pin="$PIN"
+          
+          Write-Host "Starting CRD Host..."
+          Start-Process -FilePath "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" -ArgumentList "--code=`"$AuthCode`" --redirect-url=`"https://remotedesktop.google.com/_/oauthredirect`" --name=`"$HostName`" -pin=`"$PIN`""
+          
+          Write-Host "Waiting for CRD services to initialize..."
+          Start-Sleep -Seconds 10
+          
+          Write-Host "🚀 Boosting CRD process priority to High for maximum responsiveness..."
+          try {
+            $crdProcesses = Get-Process -Name "remoting_host" -ErrorAction Stop
+            foreach ($process in $crdProcesses) {
+              $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High
+              Write-Host ("Successfully boosted PID: " + $process.Id)
+            }
+          } catch {
+            Write-Warning "Could not find 'remoting_host' process to boost. CRD might still work but without priority boost."
+          }
           
           Write-Host "=========================== CREDENTIALS ==========================="
           Write-Host "Host Name: $HostName"
@@ -65,6 +90,6 @@ jobs:
 
       - name: Keep Runner Alive
         run: |
-          Write-Host "Sesi RDP aktif. Batalkan workflow secara manual di halaman Actions untuk mengakhiri."
-          Start-Sleep -Seconds 21600 # Tetap aktif selama 6 jam (batas maksimal GitHub)
+          Write-Host "Sesi RDP aktif dengan VirtualBox terinstal. Batalkan workflow untuk mengakhiri."
+          Start-Sleep -Seconds 21600 # Tetap aktif selama 6 jam
         shell: pwsh
