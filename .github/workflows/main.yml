@@ -10,7 +10,6 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360
 
     steps:
       - name: Create User AiraaCheisyaa
@@ -19,11 +18,22 @@ jobs:
           New-LocalUser -Name "AiraaCheisyaa" -Password (ConvertTo-SecureString $password -AsPlainText -Force)
           Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
+        shell: pwsh
 
-      - name: Download and Install Chrome Remote Desktop
+      - name: Download and Install Essential Software
         run: |
+          Write-Host "Mengunduh dan menginstal Google Chrome..."
+          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/stable/current/chrome_installer.exe" -OutFile "$env:TEMP\chrome_installer.exe"
+          Start-Process -FilePath "$env:TEMP\chrome_installer.exe" -ArgumentList "/silent /install" -Wait
+          
+          Write-Host "Mengunduh dan menginstal Visual Studio Code..."
+          Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile "$env:TEMP\vscode_installer.exe"
+          Start-Process -FilePath "$env:TEMP\vscode_installer.exe" -ArgumentList '/verysilent /mergetasks=!runcode' -Wait
+
+          Write-Host "Mengunduh dan menginstal Chrome Remote Desktop..."
           Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
           Start-Process msiexec.exe -Wait -ArgumentList '/i crd.msi /qn'
+        shell: pwsh
       
       - name: Extract Code and Start Chrome Remote Desktop Host
         run: |
@@ -55,6 +65,10 @@ jobs:
           Write-Host "Windows Password: $env:WINDOWS_PASSWORD"
           Write-Host "CRD PIN: $PIN"
           Write-Host "====================================================================="
+        shell: pwsh
 
       - name: Keep Runner Alive
-        run: Start-Sleep -Seconds 21000 # Keep alive for ~5.8 hours
+        run: |
+          Write-Host "Sesi RDP aktif. Tutup jendela workflow secara manual untuk mengakhiri."
+          Start-Sleep -Seconds 21600 # Tetap aktif selama 6 jam (batas maksimal GitHub)
+        shell: pwsh
