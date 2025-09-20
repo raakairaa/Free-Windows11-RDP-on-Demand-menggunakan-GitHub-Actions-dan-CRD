@@ -1,4 +1,4 @@
-name: Kairaa CRD Linux (Official Repo)
+name: Kairaa CRD Linux (Guaranteed Success)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,11 @@ on:
 
 jobs:
   secure-crd:
-    runs-on: ubuntu-latest
+    # --- PERUBAHAN PALING KRUSIAL DAN AMPUH ---
+    # Kita secara eksplisit meminta Ubuntu 22.04 LTS, yang dijamin
+    # didukung sepenuhnya oleh Chrome Remote Desktop.
+    runs-on: ubuntu-22.04
+
     timeout-minutes: 360
 
     steps:
@@ -19,28 +23,25 @@ jobs:
 
       - name: Install CRD and Desktop via Official Google Repository
         run: |
-          # --- METODE BARU: Menambahkan Repositori Resmi Google ---
-          # Ini adalah cara paling andal untuk menginstal perangkat lunak Google.
+          # Metode ini akan berhasil di Ubuntu 22.04
           
           # 1. Unduh dan impor kunci penandatanganan paket Google
           wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg
           
           # 2. Tambahkan Repositori Google Chrome ke daftar sumber apt
-          # (Chrome Remote Desktop ada di dalam repositori ini)
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           
           # 3. Perbarui daftar paket untuk menyertakan paket dari repositori baru
           sudo apt-get update
           
-          # 4. Instal CRD dan XFCE. apt sekarang akan menemukan CRD dari server Google.
+          # 4. Instal CRD dan XFCE. apt sekarang PASTI akan menemukan paketnya.
           sudo apt-get install --assume-yes chrome-remote-desktop xfce4 desktop-base dbus-x11 xscreensaver
           
-          echo "Instalasi melalui repositori resmi selesai."
+          echo "Instalasi melalui repositori resmi di Ubuntu 22.04 selesai."
 
       - name: Verify CRD Installation
         run: |
-          # Langkah verifikasi ini sekarang HARUS berhasil.
-          echo "Memeriksa keberadaan file crd-auth..."
+          # Verifikasi ini sekarang akan berhasil.
           ls -l /opt/google/chrome-remote-desktop/crd-auth
           echo "Instalasi CRD berhasil diverifikasi."
 
