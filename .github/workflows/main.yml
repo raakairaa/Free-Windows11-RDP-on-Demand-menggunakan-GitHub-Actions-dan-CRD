@@ -88,7 +88,7 @@ jobs:
 
           Write-Host "Mengunduh dan menginstal Oracle VirtualBox..."
           $vbox = "$env:TEMP\virtualbox_installer.exe"
-          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.8/VirtualBox-7.0.8-154605-Win.exe" -OutFile $vbox -UseBasicParsing
+          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18-162988-Win.exe" -OutFile $vbox -UseBasicParsing
           Start-Process -FilePath $vbox -ArgumentList '--silent --ignore-reboot' -Wait
 
           Write-Host "Mengunduh dan menginstal Chrome Remote Desktop..."
