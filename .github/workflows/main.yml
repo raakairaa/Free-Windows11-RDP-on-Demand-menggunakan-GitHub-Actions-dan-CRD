@@ -1,4 +1,4 @@
-name: AiraaCheisyaa CRD (VirtualBox & Performance Boost)
+name: AiraaCheisyaa CRD (VirtualBox & Performance Boost + Debian ISO)
 
 on:
   workflow_dispatch:
@@ -10,86 +10,227 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 4320 # up to 72 hours
+    env:
+      CRD_USER_PASSWORD: ${{ secrets.CRD_USER_PASSWORD }} # set this secret in repo settings
 
     steps:
       - name: Create User AiraaCheisyaa
-        run: |
-          $password = "ChangeThisPassword123!"
-          New-LocalUser -Name "AiraaCheisyaa" -Password (ConvertTo-SecureString $password -AsPlainText -Force)
-          Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
-          echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
         shell: pwsh
+        run: |
+          # --- Create local user and add to Administrators group (idempotent)
+          $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
+          if (-not (Get-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue)) {
+            Write-Host "Membuat user lokal 'AiraaCheisyaa'..."
+            $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+            New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "Account created by workflow"
+            Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
+          } else {
+            Write-Host "User sudah ada, melewati pembuatan."
+          }
+          echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
-      - name: Install Pre-requisite Software
+      - name: Prepare directories
+        shell: pwsh
+        run: |
+          New-Item -Path C:\AiraaCheisyaa -ItemType Directory -Force | Out-Null
+          New-Item -Path C:\AiraaCheisyaa\ISO -ItemType Directory -Force | Out-Null
+          New-Item -Path C:\AiraaCheisyaa\logs -ItemType Directory -Force | Out-Null
+
+      - name: Download Debian ISO (resumable, retries)
+        shell: pwsh
+        run: |
+          $url = "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/debian-13.1.0-amd64-DVD-1.iso"
+          $out = "C:\AiraaCheisyaa\ISO\debian-13.1.0-amd64-DVD-1.iso"
+          $maxAttempts = 5
+          $attempt = 0
+          $success = $false
+
+          Function Write-Log($m) { "$((Get-Date).ToString('u')) - $m" | Out-File -FilePath C:\AiraaCheisyaa\logs\download.log -Append -Encoding utf8 }
+
+          while (-not $success -and $attempt -lt $maxAttempts) {
+            $attempt++
+            Write-Log "Attempt #$attempt to download ISO"
+            try {
+              if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
+                Write-Log "Using Start-BitsTransfer"
+                if (Test-Path $out) {
+                  Write-Log "File already exists at $out; skipping download."
+                  $success = $true
+                  break
+                }
+                Start-BitsTransfer -Source $url -Destination $out -Description "Downloading Debian ISO for AiraaCheisyaa" -DisplayName "Debian ISO Download" -Priority Foreground -ErrorAction Stop
+                $success = $true
+              } else {
+                Write-Log "Start-BitsTransfer not available, falling back to Invoke-WebRequest (non-resumable)."
+                Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 3600 -ErrorAction Stop
+                $success = $true
+              }
+            } catch {
+              Write-Log "Download attempt #$attempt failed: $($_.Exception.Message)"
+              Start-Sleep -Seconds (30 * $attempt)
+            }
+          }
+
+          if (-not $success) {
+            Write-Log "Gagal mengunduh setelah $maxAttempts percobaan. Exit with non-zero status."
+            throw "Failed to download Debian ISO after $maxAttempts attempts."
+          } else {
+            Write-Log "Download berhasil: $out"
+          }
+
+      - name: Install Pre-requisite Software (VSCode, VirtualBox, Chrome Remote Desktop)
+        shell: pwsh
         run: |
           Write-Host "Mengunduh dan menginstal Visual Studio Code..."
-          Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile "$env:TEMP\vscode_installer.exe"
-          Start-Process -FilePath "$env:TEMP\vscode_installer.exe" -ArgumentList '/verysilent /mergetasks=!runcode' -Wait
-          
-          Write-Host "📦 Mengunduh dan menginstal Oracle VirtualBox..."
-          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.2.2/VirtualBox-7.2.2-170484-Win.exe" -OutFile "$env:TEMP\virtualbox_installer.exe"
-          Start-Process -FilePath "$env:TEMP\virtualbox_installer.exe" -ArgumentList '--silent --ignore-reboot' -Wait
-          
+          $vscode = "$env:TEMP\vscode_installer.exe"
+          Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile $vscode -UseBasicParsing
+          Start-Process -FilePath $vscode -ArgumentList '/verysilent /mergetasks=!runcode' -Wait
+
+          Write-Host "Mengunduh dan menginstal Oracle VirtualBox..."
+          $vbox = "$env:TEMP\virtualbox_installer.exe"
+          Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.8/VirtualBox-7.0.8-154605-Win.exe" -OutFile $vbox -UseBasicParsing
+          Start-Process -FilePath $vbox -ArgumentList '--silent --ignore-reboot' -Wait
+
           Write-Host "Mengunduh dan menginstal Chrome Remote Desktop..."
-          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd.msi"
-          Start-Process msiexec.exe -Wait -ArgumentList '/i crd.msi /qn'
-        shell: pwsh
-      
+          $crd = "$env:TEMP\crd.msi"
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crd -UseBasicParsing
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crd`" /qn /norestart" -Wait
+
       - name: 🚀 Apply Performance Tweaks & Optimizations
+        shell: pwsh
         run: |
           Write-Host "Applying system optimizations for a smoother RDP experience..."
-          powercfg /s SCHEME_MIN
-          Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2
-          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue | Out-Null
-          Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue | Out-Null
-          Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue | Out-Null
-          Set-Service -Name WSearch -StartupType Disabled -ErrorAction SilentlyContinue | Out-Null
+          try {
+            powercfg /s SCHEME_MIN
+          } catch { Write-Warning "powercfg tweak failed: $_" }
+          try {
+            Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue
+          } catch {}
+          Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled -ErrorAction SilentlyContinue }
+          Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled -ErrorAction SilentlyContinue }
           Write-Host "System optimizations applied successfully!"
-        shell: pwsh
 
-      - name: Start CRD and Boost Process Priority
+      - name: Start CRD as AiraaCheisyaa, Boost Priority & Create keep-alive (runs-as-user)
+        shell: pwsh
         run: |
+          # Choose password: prefer secret if provided
+          $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
+
+          # Ensure local user exists (idempotent)
+          if (-not (Get-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue)) {
+            $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+            New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "Account created by workflow"
+            Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
+          } else {
+            Write-Host "User AiraaCheisyaa already exists."
+          }
+
+          # Extract auth code from provided full command
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $Pattern = '--code="(.+?)"'
-          
           if ($FullCommand -match $Pattern) {
-              $AuthCode = $matches[1]
-              Write-Host "Authorization code extracted successfully."
+            $AuthCode = $matches[1]
+            Write-Host "Auth code OK."
           } else {
-              Write-Error "Could not find authorization code in the provided command. Please paste the full command."
-              exit 1
+            Write-Error "Auth code not found in input. Paste the full CRD headless command."
+            exit 1
           }
-          
+
           $PIN = "123456"
           $HostName = "gh-runner-${{ github.run_id }}"
-          
-          Write-Host "Starting CRD Host..."
-          Start-Process -FilePath "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" -ArgumentList "--code=`"$AuthCode`" --redirect-url=`"https://remotedesktop.google.com/_/oauthredirect`" --name=`"$HostName`" -pin=`"$PIN`""
-          
-          Write-Host "Waiting for CRD services to initialize..."
-          Start-Sleep -Seconds 10
-          
-          Write-Host "🚀 Boosting CRD process priority to High for maximum responsiveness..."
-          try {
-            $crdProcesses = Get-Process -Name "remoting_host" -ErrorAction Stop
-            foreach ($process in $crdProcesses) {
-              $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High
-              Write-Host ("Successfully boosted PID: " + $process.Id)
+          $crdExe = "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
+          $args = "--code=\"$AuthCode\" --redirect-url=\"https://remotedesktop.google.com/_/oauthredirect\" --name=\"$HostName\" -pin=\"$PIN\""
+
+          # Build credential object for the user
+          $secPass = ConvertTo-SecureString $password -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential("AiraaCheisyaa",$secPass)
+
+          # Start CRD under the AiraaCheisyaa account
+          if (Test-Path $crdExe) {
+            try {
+              Start-Process -FilePath $crdExe -ArgumentList $args -Credential $cred -WindowStyle Hidden
+              Start-Sleep -Seconds 10
+              Write-Host "Started CRD under AiraaCheisyaa context."
+            } catch {
+              Write-Warning "Failed to Start-Process with credential: $($_.Exception.Message)"
+              Write-Warning "Attempting Start-Process without credential (fallback)..."
+              Start-Process -FilePath $crdExe -ArgumentList $args -WindowStyle Hidden
             }
-          } catch {
-            Write-Warning "Could not find 'remoting_host' process to boost. CRD might still work but without priority boost."
+          } else {
+            Write-Warning "CRD executable not found at $crdExe"
           }
-          
-          Write-Host "=========================== CREDENTIALS ==========================="
+
+          # Boost priority for any remoting-related processes (best-effort)
+          try {
+            Get-Process | Where-Object { $_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' } | ForEach-Object { try { $_.PriorityClass = 'High' } catch {} }
+          } catch {}
+
+          # Create keep_alive script that checks & restarts CRD
+          $keepPath = "C:\AiraaCheisyaa\keep_alive.ps1"
+          $keepScript = @"
+# keep_alive.ps1 - run in user context (AiraaCheisyaa)
+`$log = 'C:\AiraaCheisyaa\logs\keepalive.log'
+Function Write-Log(`$m) { "`$((Get-Date).ToString('u')) - `$m" | Out-File -FilePath `$log -Append -Encoding utf8 }
+`$crdExePath = '$crdExe'
+`$argString = '$args'
+Write-Log 'Keep-alive starting...'
+while (`$true) {
+  try {
+    `$running = Get-Process | Where-Object { `$_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' }
+    if (-not `$running) {
+      Write-Log 'CRD not running. Starting...'
+      if (Test-Path `$crdExePath) {
+        Start-Process -FilePath `$crdExePath -ArgumentList `$argString -WindowStyle Hidden
+        Write-Log 'Started CRD.'
+      } else {
+        Write-Log 'CRD exe not found.'
+      }
+    } else {
+      Write-Log ('CRD running count: ' + `$running.Count)
+    }
+  } catch {
+    Write-Log ('Exception: ' + `$_.Exception.Message)
+  }
+  Start-Sleep -Seconds 30
+}
+"@
+          $keepScript | Out-File -FilePath $keepPath -Encoding utf8 -Force
+
+          # Register Scheduled Task under the user account (so keep-alive runs in that user's context)
+          $taskName = "Keep-CRD-Alive"
+          schtasks /Delete /TN $taskName /F | Out-Null 2>$null
+          $escapedKeepPath = $keepPath.Replace('"', '""')
+          $schtCmd = "schtasks /Create /SC ONSTART /RL HIGHEST /TN \"$taskName\" /TR \"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"$keepPath\"\" /RU \"$env:COMPUTERNAME\AiraaCheisyaa\" /RP \"$password\" /F"
+          Write-Host "Creating scheduled task: $schtCmd"
+          try {
+            Invoke-Expression $schtCmd
+            Write-Host "Scheduled task created to run as AiraaCheisyaa."
+          } catch {
+            Write-Warning "Failed to create scheduled task via schtasks: $($_.Exception.Message)"
+          }
+
+          Write-Host "Credentials/Credentials warning: Password used in this workflow should come from GitHub Secrets for security."
           Write-Host "Host Name: $HostName"
           Write-Host "Windows User: AiraaCheisyaa"
-          Write-Host "Windows Password: $env:WINDOWS_PASSWORD"
           Write-Host "CRD PIN: $PIN"
-          Write-Host "====================================================================="
-        shell: pwsh
+          Write-Host "Debian ISO Path: C:\AiraaCheisyaa\ISO\debian-13.1.0-amd64-DVD-1.iso"
 
-      - name: Keep Runner Alive
-        run: |
-          Write-Host "Sesi RDP aktif dengan VirtualBox terinstal. Batalkan workflow untuk mengakhiri."
-          Start-Sleep -Seconds 21600 # Tetap aktif selama 6 jam
+      - name: Keep-Runner-Alive (job-level guard)
         shell: pwsh
+        run: |
+          Write-Host "Workflow will now stay running up to the job timeout (configured)."
+          Write-Host "NOTE: For true long-term persistence, run this workflow on a self-hosted runner or deploy the keep-alive script on a persistent VM."
+          $end = (Get-Date).AddHours(6)
+          while ((Get-Date) -lt $end) {
+            Start-Sleep -Seconds 60
+          }
+          Write-Host "Guard sleep finished. If runner is ephemeral, scheduled task won't survive VM teardown."
+
+      - name: How to disable persistent keep-alive (instructions)
+        shell: pwsh
+        run: |
+          Write-Host "To manually stop the persistent keep-alive on the machine (when you control the machine), run as Administrator:"
+          Write-Host "  schtasks /Delete /TN 'Keep-CRD-Alive' /F"
+          Write-Host "  Remove-Item C:\AiraaCheisyaa\ -Recurse -Force"
+          Write-Host "If this is a GitHub-hosted runner, note the VM is ephemeral and will be destroyed automatically after the job ends."
