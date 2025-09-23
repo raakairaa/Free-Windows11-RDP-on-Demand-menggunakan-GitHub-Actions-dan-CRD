@@ -43,12 +43,11 @@ jobs:
           $wallpaperPath = "C:\AiraaCheisyaa\wallpaper.png"
           Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
 
-          # Siapkan skrip PowerShell untuk set wallpaper
           $setWallpaperScript = @"
 Add-Type @'
 using System.Runtime.InteropServices;
 public class Wallpaper {
-  [DllImport("user32.dll", SetLastError = true)]
+  [DllImport(""user32.dll"", SetLastError = true)]
   public static extern bool SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
 }
 '@
@@ -60,7 +59,6 @@ Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name Wallpaper -Value '$w
           $wallpaperScriptPath = "$userDocs\SetWallpaper.ps1"
           $setWallpaperScript | Out-File -FilePath $wallpaperScriptPath -Encoding utf8 -Force
 
-          # Tambahkan ke profile agar auto jalan saat user login PowerShell
           $userProfilePath = "C:\Users\AiraaCheisyaa\Documents\WindowsPowerShell"
           if (!(Test-Path $userProfilePath)) { New-Item -Path $userProfilePath -ItemType Directory | Out-Null }
           $profileFile = "$userProfilePath\profile.ps1"
@@ -144,7 +142,6 @@ Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name Wallpaper -Value '$w
         run: |
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
 
-          # jalankan Chrome Remote Desktop di konteks user target
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $Pattern = '--code="(.+?)"'
           if ($FullCommand -match $Pattern) {
@@ -163,7 +160,6 @@ Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name Wallpaper -Value '$w
           $secPass = ConvertTo-SecureString $password -AsPlainText -Force
           $cred = New-Object System.Management.Automation.PSCredential(".\AiraaCheisyaa",$secPass)
 
-          # Jalankan CRD di user context (agar login CRD ke user AiraaCheisyaa, bukan runneradmin)
           if (Test-Path "$crdExe") {
             try {
               Start-Process -FilePath "$crdExe" -ArgumentList $args -Credential $cred -WindowStyle Hidden
