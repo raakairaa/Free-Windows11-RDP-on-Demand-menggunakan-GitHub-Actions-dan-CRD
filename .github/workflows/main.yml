@@ -12,13 +12,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 4320 # up to 72 hours
     env:
-      CRD_USER_PASSWORD: ${{ secrets.CRD_USER_PASSWORD }} # set this secret in repo settings
+      CRD_USER_PASSWORD: ${{ secrets.CRD_USER_PASSWORD }}
 
     steps:
       - name: Create User AiraaCheisyaa
         shell: pwsh
         run: |
-          # --- Create local user and add to Administrators group (idempotent)
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
           if (-not (Get-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue)) {
             Write-Host "Membuat user lokal 'AiraaCheisyaa'..."
@@ -101,12 +100,8 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Applying system optimizations for a smoother RDP experience..."
-          try {
-            powercfg /s SCHEME_MIN
-          } catch { Write-Warning "powercfg tweak failed: $_" }
-          try {
-            Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue
-          } catch {}
+          try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
+          try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
           Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled -ErrorAction SilentlyContinue }
           Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled -ErrorAction SilentlyContinue }
           Write-Host "System optimizations applied successfully!"
@@ -114,10 +109,8 @@ jobs:
       - name: Start CRD as AiraaCheisyaa, Boost Priority & Create keep-alive (runs-as-user)
         shell: pwsh
         run: |
-          # Choose password: prefer secret if provided
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
 
-          # Ensure local user exists (idempotent)
           if (-not (Get-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue)) {
             $securePass = ConvertTo-SecureString $password -AsPlainText -Force
             New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "Account created by workflow"
@@ -126,7 +119,6 @@ jobs:
             Write-Host "User AiraaCheisyaa already exists."
           }
 
-          # Extract auth code from provided full command
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $Pattern = '--code="(.+?)"'
           if ($FullCommand -match $Pattern) {
@@ -140,33 +132,29 @@ jobs:
           $PIN = "123456"
           $HostName = "gh-runner-${{ github.run_id }}"
           $crdExe = "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
-          $args = "--code=\"$AuthCode\" --redirect-url=\"https://remotedesktop.google.com/_/oauthredirect\" --name=\"$HostName\" -pin=\"$PIN\""
+          $args = "--code=`"$AuthCode`" --redirect-url=`"https://remotedesktop.google.com/_/oauthredirect`" --name=`"$HostName`" -pin=`"$PIN`""
 
-          # Build credential object for the user
           $secPass = ConvertTo-SecureString $password -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential("AiraaCheisyaa",$secPass)
+          $cred = New-Object System.Management.Automation.PSCredential(".\AiraaCheisyaa",$secPass)
 
-          # Start CRD under the AiraaCheisyaa account
-          if (Test-Path $crdExe) {
+          if (Test-Path "$crdExe") {
             try {
-              Start-Process -FilePath $crdExe -ArgumentList $args -Credential $cred -WindowStyle Hidden
+              Start-Process -FilePath "$crdExe" -ArgumentList $args -Credential $cred -WindowStyle Hidden
               Start-Sleep -Seconds 10
               Write-Host "Started CRD under AiraaCheisyaa context."
             } catch {
               Write-Warning "Failed to Start-Process with credential: $($_.Exception.Message)"
               Write-Warning "Attempting Start-Process without credential (fallback)..."
-              Start-Process -FilePath $crdExe -ArgumentList $args -WindowStyle Hidden
+              Start-Process -FilePath "$crdExe" -ArgumentList $args -WindowStyle Hidden
             }
           } else {
             Write-Warning "CRD executable not found at $crdExe"
           }
 
-          # Boost priority for any remoting-related processes (best-effort)
           try {
             Get-Process | Where-Object { $_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' } | ForEach-Object { try { $_.PriorityClass = 'High' } catch {} }
           } catch {}
 
-          # Create keep_alive script that checks & restarts CRD
           $keepPath = "C:\AiraaCheisyaa\keep_alive.ps1"
           $keepScript = @"
 # keep_alive.ps1 - run in user context (AiraaCheisyaa)
@@ -197,11 +185,9 @@ while (`$true) {
 "@
           $keepScript | Out-File -FilePath $keepPath -Encoding utf8 -Force
 
-          # Register Scheduled Task under the user account (so keep-alive runs in that user's context)
           $taskName = "Keep-CRD-Alive"
           schtasks /Delete /TN $taskName /F | Out-Null 2>$null
-          $escapedKeepPath = $keepPath.Replace('"', '""')
-          $schtCmd = "schtasks /Create /SC ONSTART /RL HIGHEST /TN \"$taskName\" /TR \"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"$keepPath\"\" /RU \"$env:COMPUTERNAME\AiraaCheisyaa\" /RP \"$password\" /F"
+          $schtCmd = "schtasks /Create /SC ONSTART /RL HIGHEST /TN `"$taskName`" /TR `"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$keepPath`"`" /RU `".\AiraaCheisyaa`" /RP `"$password`" /F"
           Write-Host "Creating scheduled task: $schtCmd"
           try {
             Invoke-Expression $schtCmd
@@ -210,18 +196,15 @@ while (`$true) {
             Write-Warning "Failed to create scheduled task via schtasks: $($_.Exception.Message)"
           }
 
-          Write-Host "Credentials/Credentials warning: Password used in this workflow should come from GitHub Secrets for security."
-          Write-Host "Host Name: $HostName"
           Write-Host "Windows User: AiraaCheisyaa"
           Write-Host "CRD PIN: $PIN"
           Write-Host "Debian ISO Path: C:\AiraaCheisyaa\ISO\debian-13.1.0-amd64-DVD-1.iso"
 
-      - name: Keep-Runner-Alive (job-level guard)
+      - name: Keep-Runner-Alive (job-level guard, up to 72h)
         shell: pwsh
         run: |
-          Write-Host "Workflow will now stay running up to the job timeout (configured)."
-          Write-Host "NOTE: For true long-term persistence, run this workflow on a self-hosted runner or deploy the keep-alive script on a persistent VM."
-          $end = (Get-Date).AddHours(6)
+          Write-Host "Workflow will now stay running up to the job timeout (configured for 72 hours)."
+          $end = (Get-Date).AddHours(72)
           while ((Get-Date) -lt $end) {
             Start-Sleep -Seconds 60
           }
