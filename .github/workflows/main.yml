@@ -102,11 +102,11 @@ jobs:
           Write-Host "Applying system optimizations for a smoother RDP experience..."
           try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
           try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
-          Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled -ErrorAction SilentlyContinue }
-          Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled -ErrorAction SilentlyContinue }
+          Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
+          Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
           Write-Host "System optimizations applied successfully!"
 
-      - name: Start CRD as AiraaCheisyaa, Boost Priority & Create keep-alive (runs-as-user)
+      - name: Start CRD as AiraaCheisyaa, Boost Priority
         shell: pwsh
         run: |
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
@@ -154,47 +154,6 @@ jobs:
           try {
             Get-Process | Where-Object { $_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' } | ForEach-Object { try { $_.PriorityClass = 'High' } catch {} }
           } catch {}
-
-          $keepPath = "C:\AiraaCheisyaa\keep_alive.ps1"
-          $keepScript = @"
-# keep_alive.ps1 - run in user context (AiraaCheisyaa)
-`$log = 'C:\AiraaCheisyaa\logs\keepalive.log'
-Function Write-Log(`$m) { "`$((Get-Date).ToString('u')) - `$m" | Out-File -FilePath `$log -Append -Encoding utf8 }
-`$crdExePath = '$crdExe'
-`$argString = '$args'
-Write-Log 'Keep-alive starting...'
-while (`$true) {
-  try {
-    `$running = Get-Process | Where-Object { `$_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' }
-    if (-not `$running) {
-      Write-Log 'CRD not running. Starting...'
-      if (Test-Path `$crdExePath) {
-        Start-Process -FilePath `$crdExePath -ArgumentList `$argString -WindowStyle Hidden
-        Write-Log 'Started CRD.'
-      } else {
-        Write-Log 'CRD exe not found.'
-      }
-    } else {
-      Write-Log ('CRD running count: ' + `$running.Count)
-    }
-  } catch {
-    Write-Log ('Exception: ' + `$_.Exception.Message)
-  }
-  Start-Sleep -Seconds 30
-}
-"@
-          $keepScript | Out-File -FilePath $keepPath -Encoding utf8 -Force
-
-          $taskName = "Keep-CRD-Alive"
-          schtasks /Delete /TN $taskName /F | Out-Null 2>$null
-          $schtCmd = "schtasks /Create /SC ONSTART /RL HIGHEST /TN `"$taskName`" /TR `"powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$keepPath`"`" /RU `".\AiraaCheisyaa`" /RP `"$password`" /F"
-          Write-Host "Creating scheduled task: $schtCmd"
-          try {
-            Invoke-Expression $schtCmd
-            Write-Host "Scheduled task created to run as AiraaCheisyaa."
-          } catch {
-            Write-Warning "Failed to create scheduled task via schtasks: $($_.Exception.Message)"
-          }
 
           Write-Host "Windows User: AiraaCheisyaa"
           Write-Host "CRD PIN: $PIN"
