@@ -1,3 +1,23 @@
+- name: Set custom Windows wallpaper (For Current User)
+  shell: pwsh
+  run: |
+    # ... skrip dengan indentasi ...
+    Add-Type -TypeDefinition @"
+      ... kode C# dengan indentasi ...
+"@  <-- MASALAH DI SINI! Tidak ada indentasi.
+    # ... sisa skrip ...```
+
+Karena `"@` berada di kolom 1 (tanpa spasi di depannya), parser YAML mengira bahwa blok `run: |` telah selesai. Kemudian ia mencoba membaca `"@` sebagai kunci YAML baru, yang tentu saja bukan sintaks yang valid, sehingga menyebabkan galat "Implicit key".
+
+### 2. Solusi
+
+Solusinya sangat sederhana: kita hanya perlu memastikan **semua baris** di dalam blok `run: |`, termasuk `"@`, memiliki indentasi yang benar (dalam hal ini, minimal 4 spasi).
+
+### 3. Perubahan Kode — Seluruh File `main.yml`
+
+Berikut adalah file `main.yml` yang lengkap dengan perbaikan indentasi pada satu baris tersebut. Anda dapat langsung mengganti seluruh file Anda dengan yang ini.
+
+```yaml
 name: AiraaCheisyaa CRD (VirtualBox & Performance Boost + Debian ISO)
 
 on:
@@ -65,10 +85,9 @@ jobs:
             [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
             public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
           }
-"@
+          "@
           [Wallpaper]::SystemParametersInfo(20, 0, $wallpaperPath, 3)
           Write-Host "Wallpaper telah diatur untuk sesi saat ini."
-
 
       - name: Download Debian ISO (uses cache)
         shell: pwsh
@@ -166,6 +185,4 @@ jobs:
           Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service wuauserv -ErrorAction SilentlyContinue
           Start-Service WSearch -ErrorAction SilentlyContinue
-          # Mengganti nama kembali tidak diperlukan untuk runner GH, tapi bisa ditambahkan untuk runner pribadi
-          # Rename-LocalUser -Name "AiraaCheisyaa" -NewName "runneradmin"
           Write-Host "--- Cleanup Finished ---"
