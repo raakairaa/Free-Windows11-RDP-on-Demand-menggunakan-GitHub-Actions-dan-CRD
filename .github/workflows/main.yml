@@ -116,13 +116,21 @@ jobs:
             exit 1
           }
 
-          # 1. Secara dinamis cari lokasi CRD host executable
-          Write-Host "Mencari lokasi remoting_start_host.exe..."
-          $crdExeFile = Get-ChildItem -Path "C:\Program Files", "C:\Program Files (x86)" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          # 1. OPTIMISASI: Cari direktori Google terlebih dahulu. Ini SANGAT CEPAT.
+          Write-Host "Mencari direktori instalasi Google..."
+          $googleDirs = Get-ChildItem -Path "C:\Program Files", "C:\Program Files (x86)" -Filter "Google" -Directory -ErrorAction SilentlyContinue
           
-          # 2. Validasi apakah file ditemukan
+          if ($null -eq $googleDirs) {
+            Write-Error "FATAL: Direktori instalasi Google tidak ditemukan. Instalasi CRD mungkin gagal."
+            exit 1
+          }
+
+          # 2. Sekarang cari file HANYA di dalam direktori Google yang ditemukan. Ini JAUH LEBIH CEPAT.
+          Write-Host "Mencari remoting_start_host.exe di dalam direktori Google..."
+          $crdExeFile = Get-ChildItem -Path $googleDirs.FullName -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          
           if ($null -eq $crdExeFile) {
-            Write-Error "FATAL: remoting_start_host.exe tidak dapat ditemukan! Instalasi CRD mungkin gagal."
+            Write-Error "FATAL: remoting_start_host.exe tidak dapat ditemukan di dalam direktori Google! Instalasi CRD mungkin gagal."
             exit 1
           }
           $crdExePath = $crdExeFile.FullName
@@ -160,7 +168,7 @@ jobs:
           $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
           if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
           Remove-Item -Path "C:\ProgramData\Google\Chrome Remote Desktop" -Recurse -Force -ErrorAction SilentlyContinue
-          powercfg /s 381b4222-f64-41f0-9685-ff5bb260df2e | Out-Null
+          powercfg /s 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
           Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
           Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service wuauserv -ErrorAction SilentlyContinue
