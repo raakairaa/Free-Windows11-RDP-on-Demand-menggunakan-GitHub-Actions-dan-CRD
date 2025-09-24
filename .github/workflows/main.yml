@@ -13,7 +13,6 @@ jobs:
     timeout-minutes: 4320
     env:
       CRD_USER_PASSWORD: ${{ secrets.CRD_USER_PASSWORD }}
-      # Definisikan path cache di env agar mudah diakses
       INSTALLER_CACHE_PATH: C:\cached-installers
       DEBIAN_ISO_FILENAME: debian-13.1.0-amd64-DVD-1.iso
 
@@ -26,7 +25,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.INSTALLER_CACHE_PATH }}
-          key: ${{ runner.os }}-installers-v2-${{ env.DEBIAN_ISO_FILENAME }} # Ubah v2 ke v3 jika ingin refresh cache
+          key: ${{ runner.os }}-installers-v2-${{ env.DEBIAN_ISO_FILENAME }}
 
       - name: Create User AiraaCheisyaa
         shell: pwsh
@@ -48,7 +47,6 @@ jobs:
           New-Item -Path C:\AiraaCheisyaa -ItemType Directory -Force | Out-Null
           New-Item -Path C:\AiraaCheisyaa\ISO -ItemType Directory -Force | Out-Null
           New-Item -Path C:\AiraaCheisyaa\logs -ItemType Directory -Force | Out-Null
-          # Buat direktori cache jika belum ada
           if (-not (Test-Path "${{ env.INSTALLER_CACHE_PATH }}")) {
             New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
           }
@@ -56,7 +54,6 @@ jobs:
       - name: Set custom Windows wallpaper
         shell: pwsh
         run: |
-          # (Skrip ini tidak diubah, tetap seperti sebelumnya)
           $wallpaperUrl = "https://files.catbox.moe/dqwzph.png"
           $wallpaperPath = "C:\AiraaCheisyaa\wallpaper.png"
           Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
@@ -89,13 +86,11 @@ jobs:
           $isoUrl = "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/${{ env.DEBIAN_ISO_FILENAME }}"
           $cachedIsoPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "${{ env.DEBIAN_ISO_FILENAME }}"
           $finalIsoPath = "C:\AiraaCheisyaa\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
-
           if (Test-Path $cachedIsoPath) {
               Write-Host "ISO found in cache. Copying to destination..."
               Copy-Item -Path $cachedIsoPath -Destination $finalIsoPath -Force
           } else {
               Write-Host "ISO not found in cache. Starting download..."
-              # (Logika download BITS Anda diletakkan di sini)
               Invoke-WebRequest -Uri $isoUrl -OutFile $cachedIsoPath -UseBasicParsing
               Copy-Item -Path $cachedIsoPath -Destination $finalIsoPath -Force
           }
@@ -132,7 +127,6 @@ jobs:
       - name: '🚀 Apply Performance Tweaks & Optimizations'
         shell: pwsh
         run: |
-          # (Skrip ini tidak diubah)
           Write-Host "Applying system optimizations for a smoother RDP experience..."
           try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
           try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
@@ -143,32 +137,53 @@ jobs:
       - name: Start CRD as AiraaCheisyaa, Boost Priority
         shell: pwsh
         run: |
-          # (Skrip ini tidak diubah)
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $Pattern = '--code="(.+?)"'
-          if ($FullCommand -match $Pattern) { $AuthCode = $matches[1] } else { Write-Error "Auth code not found"; exit 1 }
+          if ($FullCommand -match $Pattern) {
+            $AuthCode = $matches[1]
+            Write-Host "Auth code extracted successfully."
+          } else {
+            Write-Error "Auth code not found in the input. Please paste the full CRD headless command."
+            exit 1
+          }
+
           $PIN = "123456"
           $HostName = "gh-runner-${{ github.run_id }}"
           $crdExe = "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
-          $args = "--code=`"$AuthCode`" --redirect-url=`"https://remotedesktop.google.com/_/oauthredirect`" --name=`"$HostName`" -pin=`"$PIN`""
-          $secPass = ConvertTo-SecureString $password -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential(".\AiraaCheisyaa",$secPass)
-          Start-Process -FilePath "$crdExe" -ArgumentList $args -Credential $cred -WindowStyle Hidden -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 10
-          Get-Process | Where-Object { $_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' } | ForEach-Object { try { $_.PriorityClass = 'High' } catch {} }
+          $crdArgs = "--code=`"$AuthCode`" --redirect-url=`"https://remotedesktop.google.com/_/oauthredirect`" --name=`"$HostName`" -pin=`"$PIN`""
+          $fullCommandToRun = "& `"$crdExe`" $crdArgs"
+
+          Write-Host "Scheduling a one-time task to start CRD as AiraaCheisyaa..."
+
+          schtasks /Create /SC ONCE /TN "StartCRDHost" /TR "powershell -Command $fullCommandToRun" /RU "AiraaCheisyaa" /RP "$password" /ST 23:59 /F
+          schtasks /Run /TN "StartCRDHost"
+          Start-Sleep -Seconds 15
+          schtasks /Delete /TN "StartCRDHost" /F
+
+          Write-Host "CRD host process started via scheduled task."
+
+          try {
+            Get-Process | Where-Object { $_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' } | ForEach-Object {
+              Write-Host "Boosting priority for process: $($_.ProcessName) (ID: $($_.Id))"
+              try { $_.PriorityClass = 'High' } catch { Write-Warning "Failed to boost priority for PID $($_.Id): $_" }
+            }
+          } catch { Write-Warning "Could not boost process priority: $_" }
+          
+          Write-Host "----------------------------------------"
           Write-Host "Windows User: AiraaCheisyaa"
           Write-Host "CRD PIN: $PIN"
           Write-Host "Debian ISO Path: C:\AiraaCheisyaa\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
+          Write-Host "----------------------------------------"
 
       - name: Keep-Runner-Alive
         shell: pwsh
         run: |
           Write-Host "Workflow will now stay running up to the job timeout."
-          Start-Sleep -Seconds 258000 # ~71.6 jam
+          Start-Sleep -Seconds 258000
 
       - name: 🧹 Run Full System Cleanup
-        if: always() # WAJIB: Langkah ini akan selalu berjalan di akhir
+        if: always()
         shell: pwsh
         run: |
           Write-Host "--- Starting Full System Cleanup ---"
@@ -196,7 +211,7 @@ jobs:
 
           # 5. Reset system tweaks
           Write-Host "Reverting system tweaks..."
-          # Set power scheme back to Balanced (default)
+          # Set power scheme back to Balanced (default GUID)
           powercfg /s 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
           # Re-enable Windows Update and Search services
           Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
