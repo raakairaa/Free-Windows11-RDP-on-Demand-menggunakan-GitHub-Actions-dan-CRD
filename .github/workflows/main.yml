@@ -32,13 +32,10 @@ jobs:
         run: |
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
           Write-Host "Mengganti nama pengguna 'runneradmin' menjadi 'AiraaCheisyaa'..."
           Rename-LocalUser -Name "runneradmin" -NewName "AiraaCheisyaa"
-          
           Write-Host "Mengatur kata sandi untuk 'AiraaCheisyaa'..."
           Set-LocalUser -Name "AiraaCheisyaa" -Password $securePass
-
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
       - name: Prepare directories
@@ -54,11 +51,9 @@ jobs:
       - name: Set custom Windows wallpaper (For Current User)
         shell: pwsh
         run: |
-          # Disederhanakan untuk langsung menerapkan ke pengguna saat ini (AiraaCheisyaa)
           $wallpaperUrl = "https://files.catbox.moe/dqwzph.png"
           $wallpaperPath = "C:\AiraaCheisyaa\wallpaper.png"
           Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
-          
           Add-Type -TypeDefinition @"
           using System.Runtime.InteropServices;
           public class Wallpaper {
@@ -66,7 +61,6 @@ jobs:
             public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
           }
           "@
-          # FIX: Indentasi untuk dua baris berikut telah diperbaiki.
           [Wallpaper]::SystemParametersInfo(20, 0, $wallpaperPath, 3)
           Write-Host "Wallpaper telah diatur untuk sesi saat ini."
 
@@ -113,7 +107,6 @@ jobs:
         shell: pwsh
         run: |
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
-          # Ekstrak HANYA argumen dari perintah yang diberikan pengguna
           $ArgsPattern = '\s+--code.+'
           if ($FullCommand -match $ArgsPattern) {
             $crdArgs = $matches[0].Trim()
@@ -123,15 +116,23 @@ jobs:
             exit 1
           }
 
-          $PIN = "123456"
-          $HostName = "gh-runner-${{ github.run_id }}"
-          $crdExe = "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
+          # 1. Secara dinamis cari lokasi CRD host executable
+          Write-Host "Mencari lokasi remoting_start_host.exe..."
+          $crdExeFile = Get-ChildItem -Path "C:\Program Files", "C:\Program Files (x86)" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           
-          # Tambahkan -pin ke argumen
+          # 2. Validasi apakah file ditemukan
+          if ($null -eq $crdExeFile) {
+            Write-Error "FATAL: remoting_start_host.exe tidak dapat ditemukan! Instalasi CRD mungkin gagal."
+            exit 1
+          }
+          $crdExePath = $crdExeFile.FullName
+          Write-Host "CRD host ditemukan di: $crdExePath"
+
+          $PIN = "123456"
           $finalArgs = "$crdArgs -pin=`"$PIN`""
           
           Write-Host "Starting CRD host directly in the current user session..."
-          Start-Process -FilePath $crdExe -ArgumentList $finalArgs -Wait
+          Start-Process -FilePath $crdExePath -ArgumentList $finalArgs -Wait
 
           Write-Host "CRD host process started. Waiting for initialization..."
           Start-Sleep -Seconds 10
@@ -153,15 +154,13 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "--- Starting Full System Cleanup ---"
-          # Karena runner GitHub bersifat sementara, pembersihan total tidak lagi krusial,
-          # tapi ini adalah praktik yang baik jika dijalankan pada runner pribadi.
           Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
           Remove-Item -Path C:\AiraaCheisyaa -Recurse -Force -ErrorAction SilentlyContinue
           $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
           if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
           Remove-Item -Path "C:\ProgramData\Google\Chrome Remote Desktop" -Recurse -Force -ErrorAction SilentlyContinue
-          powercfg /s 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
+          powercfg /s 381b4222-f64-41f0-9685-ff5bb260df2e | Out-Null
           Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
           Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service wuauserv -ErrorAction SilentlyContinue
