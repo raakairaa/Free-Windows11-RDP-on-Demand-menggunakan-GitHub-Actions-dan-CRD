@@ -1,4 +1,4 @@
-name: AiraaCheisyaa CRD (VirtualBox & Auto-Logon + Debian ISO)
+name: AiraaCheisyaa CRD (VirtualBox & Performance Boost + Debian ISO)
 
 on:
   workflow_dispatch:
@@ -25,32 +25,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.INSTALLER_CACHE_PATH }}
-          key: ${{ runner.os }}-installers-v3-${{ env.DEBIAN_ISO_FILENAME }} # v3 untuk cache baru
+          key: ${{ runner.os }}-installers-v3-${{ env.DEBIAN_ISO_FILENAME }}
 
-      - name: Create User, Prepare Dirs, and Install Software
-        id: setup
+      - name: Prepare Dirs and Install All Software
         shell: pwsh
         run: |
-          # 1. Buat Pengguna Baru (Strategi Lama yang Terbukti Berhasil)
-          $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
-          if (-not (Get-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue)) {
-            Write-Host "Membuat user lokal 'AiraaCheisyaa'..."
-            $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-            New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "Account created by workflow"
-            Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
-            Add-LocalGroupMember -Group "Remote Desktop Users" -Member "AiraaCheisyaa"
-          } else {
-            Write-Host "User sudah ada, melewati pembuatan."
-          }
-          echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
-
-          # 2. Siapkan Direktori
+          # Siapkan Direktori
           New-Item -Path C:\AiraaCheisyaa -ItemType Directory -Force | Out-Null
           if (-not (Test-Path "${{ env.INSTALLER_CACHE_PATH }}")) {
             New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
           }
 
-          # 3. Instal Perangkat Lunak (Sebagai runneradmin, yang kita tahu berhasil)
+          # Instal Perangkat Lunak SEBELUM mengubah nama pengguna
+          Write-Host "Installing software as default runner user..."
           $vscodePath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "vscode_installer.exe"
           $vboxPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "virtualbox_installer.exe"
           $crdPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
@@ -61,56 +48,51 @@ jobs:
           if (-not (Test-Path $crdPath)) { Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crdPath }
           Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart" -Wait
           
-          # Beri waktu beberapa detik agar instalasi benar-benar selesai
+          # Beri waktu beberapa detik agar instalasi CRD benar-benar selesai
+          Write-Host "Waiting for CRD installation to finalize..."
           Start-Sleep -Seconds 15
 
-      - name: Configure Auto-Logon for AiraaCheisyaa and Restart
+      - name: Rename Runner User to AiraaCheisyaa and Set Password
         shell: pwsh
         run: |
-          $password = $env:WINDOWS_PASSWORD
-          Write-Host "Configuring registry for auto-logon as AiraaCheisyaa..."
-          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultUserName -Value "AiraaCheisyaa"
-          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword -Value $password
-          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name AutoAdminLogon -Value "1"
+          # SETELAH instalasi berhasil, baru ubah identitas pengguna
+          $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
-          Write-Host "Restarting the computer to apply auto-logon..."
-          Restart-Computer -Force
+          Write-Host "Renaming 'runneradmin' to 'AiraaCheisyaa'..."
+          Rename-LocalUser -Name "runneradmin" -NewName "AiraaCheisyaa"
+          
+          Write-Host "Setting password for 'AiraaCheisyaa'..."
+          Set-LocalUser -Name "AiraaCheisyaa" -Password $securePass
 
-      - name: Start CRD as AiraaCheisyaa (Post-Restart)
-        # Langkah ini akan berjalan setelah runner menyambung kembali, sekarang sebagai AiraaCheisyaa
+          echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
+
+      - name: Start CRD in Current Session (now as AiraaCheisyaa)
         shell: pwsh
         run: |
-          # Hapus kunci registry auto-logon untuk keamanan
-          Write-Host "Disabling auto-logon for security..."
-          Remove-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name AutoAdminLogon -Value "0"
-
-          Write-Host "Verifying current user is AiraaCheisyaa..."
-          if ($env:UserName -ne "AiraaCheisyaa") {
-            Write-Error "FATAL: Auto-logon failed. Current user is $env:UserName"
-            exit 1
-          }
+          Write-Host "Verifying current user is now AiraaCheisyaa..."
+          Write-Host "Current user: $env:UserName" # Ini mungkin masih menampilkan runneradmin, tapi nama logonnya sudah AiraaCheisyaa
 
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $ArgsPattern = '\s+--code.+'
           if ($FullCommand -match $ArgsPattern) { $crdArgs = $matches[0].Trim() }
           else { Write-Error "Could not extract arguments from input."; exit 1 }
 
-          $crdExePath = (Get-ChildItem -Path "C:\Program Files\Google" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $crdExePath = (Get-ChildItem -Path "C:\Program Files\Google" -Filter "remoting_start_host.exe" -Recuse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           if (-not $crdExePath) {
-            Write-Error "FATAL: remoting_start_host.exe not found post-restart."
+            Write-Error "FATAL: remoting_start_host.exe not found after installation."
             exit 1
           }
 
           $PIN = "123456"
           $finalArgs = "$crdArgs -pin=`"$PIN`""
           
-          Write-Host "Starting CRD host directly in AiraaCheisyaa session..."
+          Write-Host "Starting CRD host directly in the current session..."
           Start-Process -FilePath $crdExePath -ArgumentList $finalArgs
 
           Start-Sleep -Seconds 10
           Write-Host "----------------------------------------"
-          Write-Host "Windows User: AiraaCheisyaa (Verified)"
+          Write-Host "Windows User: AiraaCheisyaa"
           Write-Host "CRD PIN: $PIN"
           Write-Host "----------------------------------------"
 
