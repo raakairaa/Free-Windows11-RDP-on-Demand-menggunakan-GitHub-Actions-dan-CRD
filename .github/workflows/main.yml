@@ -1,4 +1,4 @@
-name: AiraaCheisyaa CRD (VirtualBox & Performance Boost + Debian ISO)
+name: CRD on GitHub Runner (VirtualBox & Performance Boost)
 
 on:
   workflow_dispatch:
@@ -12,7 +12,6 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 4320
     env:
-      CRD_USER_PASSWORD: ${{ secrets.CRD_USER_PASSWORD }}
       INSTALLER_CACHE_PATH: C:\cached-installers
       DEBIAN_ISO_FILENAME: debian-13.1.0-amd64-DVD-1.iso
 
@@ -30,14 +29,14 @@ jobs:
       - name: Prepare Dirs and Install All Software
         shell: pwsh
         run: |
-          # Siapkan Direktori
-          New-Item -Path C:\AiraaCheisyaa -ItemType Directory -Force | Out-Null
+          # Siapkan Direktori Kerja
+          New-Item -Path C:\Workspace -ItemType Directory -Force | Out-Null
           if (-not (Test-Path "${{ env.INSTALLER_CACHE_PATH }}")) {
             New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
           }
 
-          # Instal Perangkat Lunak SEBELUM mengubah nama pengguna
-          Write-Host "Installing software as default runner user..."
+          # Instal Perangkat Lunak yang Diperlukan
+          Write-Host "Installing required software..."
           $vboxPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "virtualbox_installer.exe"
           $crdPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
 
@@ -60,18 +59,7 @@ jobs:
           Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
           Write-Host "System optimizations applied successfully!"
 
-      - name: Rename Runner User to AiraaCheisyaa and Set Password
-        shell: pwsh
-        run: |
-          $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          Write-Host "Renaming 'runneradmin' to 'AiraaCheisyaa'..."
-          Rename-LocalUser -Name "runneradmin" -NewName "AiraaCheisyaa"
-          Write-Host "Setting password for 'AiraaCheisyaa'..."
-          Set-LocalUser -Name "AiraaCheisyaa" -Password $securePass
-          echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
-
-      - name: Start CRD in Current Session (now as AiraaCheisyaa)
+      - name: Start CRD in Runner Session
         shell: pwsh
         run: |
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
@@ -79,7 +67,7 @@ jobs:
           if ($FullCommand -match $ArgsPattern) { $crdArgs = $matches[0].Trim() }
           else { Write-Error "Could not extract arguments from input."; exit 1 }
 
-          # FIX: Cari di kedua lokasi (64-bit dan 32-bit) untuk ketahanan
+          # Cari di kedua lokasi (64-bit dan 32-bit) untuk ketahanan
           $searchPaths = @(
               "C:\Program Files\Google",
               "C:\Program Files (x86)\Google"
@@ -101,15 +89,17 @@ jobs:
             exit 1
           }
 
-          $PIN = "123456"
+          # Kata sandi pengguna runner tidak diperlukan untuk memulai proses di sesi sendiri,
+          # tetapi PIN tetap diperlukan untuk koneksi.
+          $PIN = "123456" 
           $finalArgs = "$crdArgs -pin=`"$PIN`""
           
-          Write-Host "Starting CRD host directly in the current session..."
+          Write-Host "Starting CRD host directly in the current runner session..."
           Start-Process -FilePath $crdExePath -ArgumentList $finalArgs
 
           Start-Sleep -Seconds 10
           Write-Host "----------------------------------------"
-          Write-Host "Windows User: AiraaCheisyaa"
+          Write-Host "Windows User: runneradmin (Default)"
           Write-Host "CRD PIN: $PIN"
           Write-Host "----------------------------------------"
 
@@ -124,9 +114,10 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "--- Starting Full System Cleanup ---"
+          # Tidak perlu menghapus pengguna, karena kita menggunakan pengguna bawaan.
           Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path C:\AiraaCheisyaa -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path C:\Workspace -Recurse -Force -ErrorAction SilentlyContinue
           $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
           if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
           Remove-Item -Path "C:\ProgramData\Google\Chrome Remote Desktop" -Recurse -Force -ErrorAction SilentlyContinue
