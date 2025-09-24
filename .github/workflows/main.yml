@@ -38,7 +38,6 @@ jobs:
 
           # Instal Perangkat Lunak SEBELUM mengubah nama pengguna
           Write-Host "Installing software as default runner user..."
-          $vscodePath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "vscode_installer.exe"
           $vboxPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "virtualbox_installer.exe"
           $crdPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
 
@@ -48,9 +47,18 @@ jobs:
           if (-not (Test-Path $crdPath)) { Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crdPath }
           Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart" -Wait
           
-          # Beri waktu beberapa detik agar instalasi CRD benar-benar selesai
           Write-Host "Waiting for CRD installation to finalize..."
           Start-Sleep -Seconds 15
+
+      - name: 🚀 Apply Performance Tweaks & Optimizations
+        shell: pwsh
+        run: |
+          Write-Host "Applying system optimizations for a smoother RDP experience..."
+          try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
+          try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
+          Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
+          Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
+          Write-Host "System optimizations applied successfully!"
 
       - name: Rename Runner User to AiraaCheisyaa and Set Password
         shell: pwsh
@@ -70,19 +78,21 @@ jobs:
       - name: Start CRD in Current Session (now as AiraaCheisyaa)
         shell: pwsh
         run: |
-          Write-Host "Verifying current user is now AiraaCheisyaa..."
-          Write-Host "Current user: $env:UserName" # Ini mungkin masih menampilkan runneradmin, tapi nama logonnya sudah AiraaCheisyaa
+          Write-Host "Verifying current user environment..."
+          Write-Host "Current user reported by env: $env:UserName"
 
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $ArgsPattern = '\s+--code.+'
           if ($FullCommand -match $ArgsPattern) { $crdArgs = $matches[0].Trim() }
           else { Write-Error "Could not extract arguments from input."; exit 1 }
 
-          $crdExePath = (Get-ChildItem -Path "C:\Program Files\Google" -Filter "remoting_start_host.exe" -Recuse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          # FIX: Mengganti -Recuse dengan -Recurse
+          $crdExePath = (Get-ChildItem -Path "C:\Program Files\Google" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
           if (-not $crdExePath) {
             Write-Error "FATAL: remoting_start_host.exe not found after installation."
             exit 1
           }
+          Write-Host "Found CRD executable at: $crdExePath"
 
           $PIN = "123456"
           $finalArgs = "$crdArgs -pin=`"$PIN`""
@@ -101,3 +111,21 @@ jobs:
         run: |
           Write-Host "Workflow will now stay running up to the job timeout."
           Start-Sleep -Seconds 258000
+      
+      - name: 🧹 Run Full System Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "--- Starting Full System Cleanup ---"
+          Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path C:\AiraaCheisyaa -Recurse -Force -ErrorAction SilentlyContinue
+          $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
+          if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
+          Remove-Item -Path "C:\ProgramData\Google\Chrome Remote Desktop" -Recurse -Force -ErrorAction SilentlyContinue
+          powercfg /s 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
+          Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
+          Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service wuauserv -ErrorAction SilentlyContinue
+          Start-Service WSearch -ErrorAction SilentlyContinue
+          Write-Host "--- Cleanup Finished ---"
