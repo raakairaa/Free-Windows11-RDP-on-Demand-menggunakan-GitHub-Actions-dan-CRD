@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 4320 # up to 72 hours
+    timeout-minutes: 4320
     env:
       CRD_USER_PASSWORD: ${{ secrets.CRD_USER_PASSWORD }}
 
@@ -36,34 +36,34 @@ jobs:
           New-Item -Path C:\AiraaCheisyaa\ISO -ItemType Directory -Force | Out-Null
           New-Item -Path C:\AiraaCheisyaa\logs -ItemType Directory -Force | Out-Null
 
-      - name: Set custom Windows wallpaper (will auto apply on CRD login)
+      - name: Set custom Windows wallpaper (auto apply for AiraaCheisyaa)
         shell: pwsh
         run: |
           $wallpaperUrl = "https://files.catbox.moe/dqwzph.png"
           $wallpaperPath = "C:\AiraaCheisyaa\wallpaper.png"
           Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
 
-          $setWallpaperScript = @"
-Add-Type @'
+          $wallpaperScriptContent = @'
+Add-Type @"
 using System.Runtime.InteropServices;
 public class Wallpaper {
-  [DllImport(""user32.dll"", SetLastError = true)]
+  [DllImport("user32.dll", SetLastError = true)]
   public static extern bool SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
 }
-'@
-Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name Wallpaper -Value '$wallpaperPath'
-[Wallpaper]::SystemParametersInfo(20, 0, '$wallpaperPath', 3)
 "@
+Set-ItemProperty -Path "HKCU:\Control Panel\Desktop\" -Name Wallpaper -Value "C:\AiraaCheisyaa\wallpaper.png"
+[Wallpaper]::SystemParametersInfo(20, 0, "C:\AiraaCheisyaa\wallpaper.png", 3)
+'@
           $userDocs = "C:\Users\AiraaCheisyaa\Documents"
           if (!(Test-Path $userDocs)) { New-Item -Path $userDocs -ItemType Directory | Out-Null }
           $wallpaperScriptPath = "$userDocs\SetWallpaper.ps1"
-          $setWallpaperScript | Out-File -FilePath $wallpaperScriptPath -Encoding utf8 -Force
+          $wallpaperScriptContent | Out-File -FilePath $wallpaperScriptPath -Encoding utf8 -Force
 
           $userProfilePath = "C:\Users\AiraaCheisyaa\Documents\WindowsPowerShell"
           if (!(Test-Path $userProfilePath)) { New-Item -Path $userProfilePath -ItemType Directory | Out-Null }
           $profileFile = "$userProfilePath\profile.ps1"
           $profileLine = "powershell -ExecutionPolicy Bypass -NoProfile -File `"$wallpaperScriptPath`""
-          if (-not (Test-Path $profileFile) -or !(Get-Content $profileFile | Select-String -Pattern $wallpaperScriptPath)) {
+          if (-not (Test-Path $profileFile) -or !(Get-Content $profileFile | Select-String -Pattern [regex]::Escape($wallpaperScriptPath))) {
             Add-Content -Path $profileFile -Value $profileLine
           }
 
