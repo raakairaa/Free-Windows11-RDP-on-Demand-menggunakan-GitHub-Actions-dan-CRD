@@ -26,11 +26,12 @@ jobs:
           path: ${{ env.INSTALLER_CACHE_PATH }}
           key: ${{ runner.os }}-installers-v3-${{ env.DEBIAN_ISO_FILENAME }}
 
-      - name: Prepare Dirs and Install All Software
+      - name: Prepare Dirs, Install Software, and Download ISO
         shell: pwsh
         run: |
           # Siapkan Direktori Kerja
           New-Item -Path C:\Workspace -ItemType Directory -Force | Out-Null
+          New-Item -Path C:\Workspace\ISO -ItemType Directory -Force | Out-Null
           if (-not (Test-Path "${{ env.INSTALLER_CACHE_PATH }}")) {
             New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
           }
@@ -48,6 +49,21 @@ jobs:
           
           Write-Host "Waiting for CRD installation to finalize..."
           Start-Sleep -Seconds 15
+
+          # === PENAMBAHAN BARU: Unduh Debian ISO ===
+          Write-Host "Downloading Debian ISO (or using cache)..."
+          $isoUrl = "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/${{ env.DEBIAN_ISO_FILENAME }}"
+          $cachedIsoPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "${{ env.DEBIAN_ISO_FILENAME }}"
+          $finalIsoPath = "C:\Workspace\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
+          if (Test-Path $cachedIsoPath) {
+              Write-Host "ISO found in cache. Copying to destination..."
+              Copy-Item -Path $cachedIsoPath -Destination $finalIsoPath -Force
+          } else {
+              Write-Host "ISO not found in cache. Starting download..."
+              Invoke-WebRequest -Uri $isoUrl -OutFile $cachedIsoPath -UseBasicParsing
+              Copy-Item -Path $cachedIsoPath -Destination $finalIsoPath -Force
+          }
+          Write-Host "Debian ISO is ready at $finalIsoPath"
 
       - name: 🚀 Apply Performance Tweaks & Optimizations
         shell: pwsh
@@ -67,45 +83,69 @@ jobs:
           if ($FullCommand -match $ArgsPattern) { $crdArgs = $matches[0].Trim() }
           else { Write-Error "Could not extract arguments from input."; exit 1 }
 
-          # Cari di kedua lokasi (64-bit dan 32-bit) untuk ketahanan
-          $searchPaths = @(
-              "C:\Program Files\Google",
-              "C:\Program Files (x86)\Google"
-          )
+          $searchPaths = @( "C:\Program Files\Google", "C:\Program Files (x86)\Google" )
           $crdExePath = $null
           foreach ($path in $searchPaths) {
               if (Test-Path $path) {
                   $foundFile = Get-ChildItem -Path $path -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
                   if ($null -ne $foundFile) {
                       $crdExePath = $foundFile.FullName
-                      Write-Host "Found CRD executable at: $crdExePath"
                       break
                   }
               }
           }
 
           if (-not $crdExePath) {
-            Write-Error "FATAL: remoting_start_host.exe not found in any known location after installation."
+            Write-Error "FATAL: remoting_start_host.exe not found after installation."
             exit 1
           }
-
-          # Kata sandi pengguna runner tidak diperlukan untuk memulai proses di sesi sendiri,
-          # tetapi PIN tetap diperlukan untuk koneksi.
-          $PIN = "123456" 
+          Write-Host "Found CRD executable at: $crdExePath"
+          
+          $PIN = "123456"
           $finalArgs = "$crdArgs -pin=`"$PIN`""
           
           Write-Host "Starting CRD host directly in the current runner session..."
           Start-Process -FilePath $crdExePath -ArgumentList $finalArgs
 
           Start-Sleep -Seconds 10
-          Write-Host "----------------------------------------"
-          Write-Host "Windows User: runneradmin (Default)"
-          Write-Host "CRD PIN: $PIN"
-          Write-Host "----------------------------------------"
+
+      - name: Create Desktop Info & Shortcuts
+        shell: pwsh
+        run: |
+          $pin = "123456"
+          $isoPath = "C:\Workspace\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
+          $desktopPath = [System.Environment]::GetFolderPath('Desktop')
+          
+          # Membuat file teks dengan semua info penting
+          $infoContent = @"
+          Halo! Selamat datang di GitHub Runner.
+
+          Berikut informasi penting Anda:
+          - Username Windows: runneradmin
+          - PIN CRD: $pin
+          - Lokasi ISO Debian: $isoPath
+
+          Shortcut ke folder ISO juga telah dibuat di Desktop ini.
+          "@
+          $infoContent | Out-File -FilePath "$desktopPath\INFO_PENTING.txt" -Encoding utf8
+
+          # Membuat shortcut ke folder ISO
+          $wshell = New-Object -ComObject WScript.Shell
+          $shortcut = $wshell.CreateShortcut("$desktopPath\Folder ISO Debian.lnk")
+          $shortcut.TargetPath = "C:\Workspace\ISO"
+          $shortcut.Save()
+
+          Write-Host "Info file and Desktop shortcut created successfully."
+
 
       - name: Keep-Runner-Alive
         shell: pwsh
         run: |
+          Write-Host "----------------------------------------"
+          Write-Host "Windows User: runneradmin (Default)"
+          Write-Host "CRD PIN: 123456"
+          Write-Host "Debian ISO Path: C:\Workspace\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
+          Write-Host "----------------------------------------"
           Write-Host "Workflow will now stay running up to the job timeout."
           Start-Sleep -Seconds 258000
       
@@ -114,7 +154,6 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "--- Starting Full System Cleanup ---"
-          # Tidak perlu menghapus pengguna, karena kita menggunakan pengguna bawaan.
           Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
           Remove-Item -Path C:\Workspace -Recurse -Force -ErrorAction SilentlyContinue
