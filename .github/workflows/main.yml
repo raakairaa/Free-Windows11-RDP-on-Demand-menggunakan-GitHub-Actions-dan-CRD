@@ -27,18 +27,18 @@ jobs:
           path: ${{ env.INSTALLER_CACHE_PATH }}
           key: ${{ runner.os }}-installers-v2-${{ env.DEBIAN_ISO_FILENAME }}
 
-      - name: Create User AiraaCheisyaa
+      - name: Rename Runner User to AiraaCheisyaa and Set Password
         shell: pwsh
         run: |
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
-          if (-not (Get-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue)) {
-            Write-Host "Membuat user lokal 'AiraaCheisyaa'..."
-            $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-            New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "Account created by workflow"
-            Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
-          } else {
-            Write-Host "User sudah ada, melewati pembuatan."
-          }
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          Write-Host "Mengganti nama pengguna 'runneradmin' menjadi 'AiraaCheisyaa'..."
+          Rename-LocalUser -Name "runneradmin" -NewName "AiraaCheisyaa"
+          
+          Write-Host "Mengatur kata sandi untuk 'AiraaCheisyaa'..."
+          Set-LocalUser -Name "AiraaCheisyaa" -Password $securePass
+
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
       - name: Prepare directories
@@ -51,40 +51,28 @@ jobs:
             New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
           }
 
-      - name: Set custom Windows wallpaper
+      - name: Set custom Windows wallpaper (For Current User)
         shell: pwsh
         run: |
-          # (Skrip tidak diubah)
+          # Disederhanakan untuk langsung menerapkan ke pengguna saat ini (AiraaCheisyaa)
           $wallpaperUrl = "https://files.catbox.moe/dqwzph.png"
           $wallpaperPath = "C:\AiraaCheisyaa\wallpaper.png"
           Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
-          $wallpaperScriptContent = @'
-          Add-Type @"
+          
+          Add-Type -TypeDefinition @"
           using System.Runtime.InteropServices;
           public class Wallpaper {
-            [DllImport("user32.dll", SetLastError = true)]
-            public static extern bool SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+            [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+            public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
           }
-          "@
-          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop\" -Name Wallpaper -Value "C:\AiraaCheisyaa\wallpaper.png"
-          [Wallpaper]::SystemParametersInfo(20, 0, "C:\AiraaCheisyaa\wallpaper.png", 3)
-          '@
-          $userDocs = "C:\Users\AiraaCheisyaa\Documents"
-          if (!(Test-Path $userDocs)) { New-Item -Path $userDocs -ItemType Directory | Out-Null }
-          $wallpaperScriptPath = "$userDocs\SetWallpaper.ps1"
-          $wallpaperScriptContent | Out-File -FilePath $wallpaperScriptPath -Encoding utf8 -Force
-          $userProfilePath = "C:\Users\AiraaCheisyaa\Documents\WindowsPowerShell"
-          if (!(Test-Path $userProfilePath)) { New-Item -Path $userProfilePath -ItemType Directory | Out-Null }
-          $profileFile = "$userProfilePath\profile.ps1"
-          $profileLine = "powershell -ExecutionPolicy Bypass -NoProfile -File `"$wallpaperScriptPath`""
-          if (-not (Test-Path $profileFile) -or !(Get-Content $profileFile | Select-String -Pattern [regex]::Escape($wallpaperScriptPath))) {
-            Add-Content -Path $profileFile -Value $profileLine
-          }
+"@
+          [Wallpaper]::SystemParametersInfo(20, 0, $wallpaperPath, 3)
+          Write-Host "Wallpaper telah diatur untuk sesi saat ini."
+
 
       - name: Download Debian ISO (uses cache)
         shell: pwsh
         run: |
-          # (Skrip tidak diubah)
           $isoUrl = "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/${{ env.DEBIAN_ISO_FILENAME }}"
           $cachedIsoPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "${{ env.DEBIAN_ISO_FILENAME }}"
           $finalIsoPath = "C:\AiraaCheisyaa\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
@@ -101,7 +89,6 @@ jobs:
       - name: Install Pre-requisite Software (uses cache)
         shell: pwsh
         run: |
-          # (Skrip tidak diubah)
           $vscodePath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "vscode_installer.exe"
           $vboxPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "virtualbox_installer.exe"
           $crdPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
@@ -115,7 +102,6 @@ jobs:
       - name: '🚀 Apply Performance Tweaks & Optimizations'
         shell: pwsh
         run: |
-          # (Skrip tidak diubah)
           Write-Host "Applying system optimizations for a smoother RDP experience..."
           try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
           try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
@@ -123,60 +109,32 @@ jobs:
           Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
           Write-Host "System optimizations applied successfully!"
 
-      - name: Start CRD as AiraaCheisyaa, Boost Priority
+      - name: Start CRD in Current User Context (AiraaCheisyaa)
         shell: pwsh
         run: |
-          $password = $env:WINDOWS_PASSWORD
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
-          $Pattern = '--code="(.+?)"'
-          if ($FullCommand -match $Pattern) {
-            $AuthCode = $matches[1]
-            Write-Host "Auth code extracted successfully."
+          # Ekstrak HANYA argumen dari perintah yang diberikan pengguna
+          $ArgsPattern = '\s+--code.+'
+          if ($FullCommand -match $ArgsPattern) {
+            $crdArgs = $matches[0].Trim()
+            Write-Host "CRD arguments extracted successfully."
           } else {
-            Write-Error "Auth code not found in the input. Please paste the full CRD headless command."
+            Write-Error "Could not extract arguments from the input command. Please paste the full command."
             exit 1
           }
 
           $PIN = "123456"
           $HostName = "gh-runner-${{ github.run_id }}"
           $crdExe = "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
-          $crdArgs = "--code=`"$AuthCode`" --redirect-url=`"https://remotedesktop.google.com/_/oauthredirect`" --name=`"$HostName`" -pin=`"$PIN`""
           
-          # 1. Buat perintah panjang yang akan kita jalankan
-          $longCommand = "& `"$crdExe`" $crdArgs"
+          # Tambahkan -pin ke argumen
+          $finalArgs = "$crdArgs -pin=`"$PIN`""
           
-          # 2. Tulis perintah panjang itu ke dalam file skrip sementara
-          $wrapperScriptPath = "C:\AiraaCheisyaa\start_crd.ps1"
-          Set-Content -Path $wrapperScriptPath -Value $longCommand -Encoding utf8 -Force
-          Write-Host "Wrapper script for CRD created at $wrapperScriptPath"
+          Write-Host "Starting CRD host directly in the current user session..."
+          Start-Process -FilePath $crdExe -ArgumentList $finalArgs -Wait
 
-          # 3. Buat perintah untuk schtasks yang sekarang JAUH LEBIH PENDEK
-          $taskCommand = "powershell.exe -ExecutionPolicy Bypass -File `"$wrapperScriptPath`""
-          
-          Write-Host "Scheduling a one-time task to start CRD as AiraaCheisyaa..."
-          schtasks /Create /SC ONCE /TN "StartCRDHost" /TR "$taskCommand" /RU "AiraaCheisyaa" /RP "$password" /ST 23:59 /F
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "Failed to create the scheduled task. Aborting."
-              exit 1
-          }
-
-          schtasks /Run /TN "StartCRDHost"
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "Failed to run the scheduled task."
-              # Lanjutkan untuk mencoba menghapus
-          }
-
-          Write-Host "Task executed. Waiting for CRD process to initialize..."
-          Start-Sleep -Seconds 15
-          
-          schtasks /Delete /TN "StartCRDHost" /F
-
-          try {
-            Get-Process | Where-Object { $_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' } | ForEach-Object {
-              Write-Host "Boosting priority for process: $($_.ProcessName) (ID: $($_.Id))"
-              try { $_.PriorityClass = 'High' } catch { Write-Warning "Failed to boost priority for PID $($_.Id): $_" }
-            }
-          } catch { Write-Warning "Could not boost process priority: $_" }
+          Write-Host "CRD host process started. Waiting for initialization..."
+          Start-Sleep -Seconds 10
           
           Write-Host "----------------------------------------"
           Write-Host "Windows User: AiraaCheisyaa"
@@ -194,11 +152,11 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          # (Skrip tidak diubah)
           Write-Host "--- Starting Full System Cleanup ---"
+          # Karena runner GitHub bersifat sementara, pembersihan total tidak lagi krusial,
+          # tapi ini adalah praktik yang baik jika dijalankan pada runner pribadi.
           Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
-          Remove-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue
           Remove-Item -Path C:\AiraaCheisyaa -Recurse -Force -ErrorAction SilentlyContinue
           $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
           if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
@@ -208,4 +166,6 @@ jobs:
           Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service wuauserv -ErrorAction SilentlyContinue
           Start-Service WSearch -ErrorAction SilentlyContinue
+          # Mengganti nama kembali tidak diperlukan untuk runner GH, tapi bisa ditambahkan untuk runner pribadi
+          # Rename-LocalUser -Name "AiraaCheisyaa" -NewName "runneradmin"
           Write-Host "--- Cleanup Finished ---"
