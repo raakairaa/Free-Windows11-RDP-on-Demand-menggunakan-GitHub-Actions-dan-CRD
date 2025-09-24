@@ -44,16 +44,16 @@ jobs:
           Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
 
           $wallpaperScriptContent = @'
-Add-Type @"
-using System.Runtime.InteropServices;
-public class Wallpaper {
-  [DllImport("user32.dll", SetLastError = true)]
-  public static extern bool SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-}
-"@
-Set-ItemProperty -Path "HKCU:\Control Panel\Desktop\" -Name Wallpaper -Value "C:\AiraaCheisyaa\wallpaper.png"
-[Wallpaper]::SystemParametersInfo(20, 0, "C:\AiraaCheisyaa\wallpaper.png", 3)
-'@
+          Add-Type @"
+          using System.Runtime.InteropServices;
+          public class Wallpaper {
+            [DllImport("user32.dll", SetLastError = true)]
+            public static extern bool SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+          }
+          "@
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop\" -Name Wallpaper -Value "C:\AiraaCheisyaa\wallpaper.png"
+          [Wallpaper]::SystemParametersInfo(20, 0, "C:\AiraaCheisyaa\wallpaper.png", 3)
+          '@
           $userDocs = "C:\Users\AiraaCheisyaa\Documents"
           if (!(Test-Path $userDocs)) { New-Item -Path $userDocs -ItemType Directory | Out-Null }
           $wallpaperScriptPath = "$userDocs\SetWallpaper.ps1"
@@ -127,7 +127,7 @@ Set-ItemProperty -Path "HKCU:\Control Panel\Desktop\" -Name Wallpaper -Value "C:
           Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crd -UseBasicParsing
           Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crd`" /qn /norestart" -Wait
 
-      - name: 🚀 Apply Performance Tweaks & Optimizations
+      - name: '🚀 Apply Performance Tweaks & Optimizations'
         shell: pwsh
         run: |
           Write-Host "Applying system optimizations for a smoother RDP experience..."
