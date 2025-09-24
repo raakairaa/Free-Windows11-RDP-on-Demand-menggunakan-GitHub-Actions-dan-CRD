@@ -1,4 +1,4 @@
-name: AiraaCheisyaa CRD (VirtualBox & Performance Boost + Debian ISO)
+name: AiraaCheisyaa CRD (VirtualBox & Auto-Logon + Debian ISO)
 
 on:
   workflow_dispatch:
@@ -25,76 +25,97 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.INSTALLER_CACHE_PATH }}
-          key: ${{ runner.os }}-installers-v2-${{ env.DEBIAN_ISO_FILENAME }}
+          key: ${{ runner.os }}-installers-v3-${{ env.DEBIAN_ISO_FILENAME }} # v3 untuk cache baru
 
-      - name: Rename Runner User to AiraaCheisyaa and Set Password
+      - name: Create User, Prepare Dirs, and Install Software
+        id: setup
         shell: pwsh
         run: |
+          # 1. Buat Pengguna Baru (Strategi Lama yang Terbukti Berhasil)
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          Write-Host "Mengganti nama pengguna 'runneradmin' menjadi 'AiraaCheisyaa'..."
-          Rename-LocalUser -Name "runneradmin" -NewName "AiraaCheisyaa"
-          Write-Host "Mengatur kata sandi untuk 'AiraaCheisyaa'..."
-          Set-LocalUser -Name "AiraaCheisyaa" -Password $securePass
+          if (-not (Get-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue)) {
+            Write-Host "Membuat user lokal 'AiraaCheisyaa'..."
+            $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+            New-LocalUser -Name "AiraaCheisyaa" -Password $securePass -FullName "AiraaCheisyaa" -Description "Account created by workflow"
+            Add-LocalGroupMember -Group "Administrators" -Member "AiraaCheisyaa"
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member "AiraaCheisyaa"
+          } else {
+            Write-Host "User sudah ada, melewati pembuatan."
+          }
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
-      - name: Prepare directories
-        shell: pwsh
-        run: |
+          # 2. Siapkan Direktori
           New-Item -Path C:\AiraaCheisyaa -ItemType Directory -Force | Out-Null
-          New-Item -Path C:\AiraaCheisyaa\ISO -ItemType Directory -Force | Out-Null
-          New-Item -Path C:\AiraaCheisyaa\logs -ItemType Directory -Force | Out-Null
           if (-not (Test-Path "${{ env.INSTALLER_CACHE_PATH }}")) {
             New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
           }
 
-      - name: Install Pre-requisite Software & Enable CRD Install Logging
-        shell: pwsh
-        run: |
+          # 3. Instal Perangkat Lunak (Sebagai runneradmin, yang kita tahu berhasil)
           $vscodePath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "vscode_installer.exe"
           $vboxPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "virtualbox_installer.exe"
           $crdPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
 
-          # Install VSCode & VirtualBox
-          if (-not (Test-Path $vscodePath)) { Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile $vscodePath }
-          Start-Process -FilePath $vscodePath -ArgumentList '/verysilent /mergetasks=!runcode' -Wait
           if (-not (Test-Path $vboxPath)) { Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18-162988-Win.exe" -OutFile $vboxPath }
           Start-Process -FilePath $vboxPath -ArgumentList '--silent --ignore-reboot' -Wait
-
-          # Install CRD dengan logging verbose diaktifkan
+          
           if (-not (Test-Path $crdPath)) { Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crdPath }
-          $logPath = "C:\AiraaCheisyaa\logs\crd_install.log"
-          Write-Host "Starting CRD installation with verbose logging to $logPath..."
-          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart /L*v `"$logPath`"" -Wait
-          Write-Host "msiexec process has finished."
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart" -Wait
+          
+          # Beri waktu beberapa detik agar instalasi benar-benar selesai
+          Start-Sleep -Seconds 15
 
-      - name: 🔍 Run Post-Installation Diagnostics
+      - name: Configure Auto-Logon for AiraaCheisyaa and Restart
         shell: pwsh
         run: |
-          Write-Host "--- Verifying Installation Contents ---"
-          Write-Host ""
-          Write-Host "Listing top-level directories in C:\Program Files..."
-          Get-ChildItem -Path "C:\Program Files" -Directory | ForEach-Object { Write-Host " -> $($_.Name)" }
-          Write-Host ""
-          Write-Host "Listing top-level directories in C:\Program Files (x86)..."
-          Get-ChildItem -Path "C:\Program Files (x86)" -Directory | ForEach-Object { Write-Host " -> $($_.Name)" }
-          Write-Host ""
+          $password = $env:WINDOWS_PASSWORD
+          Write-Host "Configuring registry for auto-logon as AiraaCheisyaa..."
+          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultUserName -Value "AiraaCheisyaa"
+          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword -Value $password
+          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name AutoAdminLogon -Value "1"
+          
+          Write-Host "Restarting the computer to apply auto-logon..."
+          Restart-Computer -Force
 
-          $crdExeFile = Get-ChildItem -Path "C:\Program Files", "C:\Program Files (x86)" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -ne $crdExeFile) {
-              Write-Host "SUCCESS: Found remoting_start_host.exe at $($crdExeFile.FullName)"
-          } else {
-              Write-Error "FAILURE: Did not find remoting_start_host.exe anywhere."
-              # Keluar dengan kode galat untuk memastikan workflow berhenti jika file tidak ada
-              exit 1
+      - name: Start CRD as AiraaCheisyaa (Post-Restart)
+        # Langkah ini akan berjalan setelah runner menyambung kembali, sekarang sebagai AiraaCheisyaa
+        shell: pwsh
+        run: |
+          # Hapus kunci registry auto-logon untuk keamanan
+          Write-Host "Disabling auto-logon for security..."
+          Remove-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name DefaultPassword -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' -Name AutoAdminLogon -Value "0"
+
+          Write-Host "Verifying current user is AiraaCheisyaa..."
+          if ($env:UserName -ne "AiraaCheisyaa") {
+            Write-Error "FATAL: Auto-logon failed. Current user is $env:UserName"
+            exit 1
           }
 
-      # Langkah-langkah lain sengaja dilewati untuk fokus pada diagnostik
-      # ...
+          $FullCommand = '${{ github.event.inputs.crd_full_command }}'
+          $ArgsPattern = '\s+--code.+'
+          if ($FullCommand -match $ArgsPattern) { $crdArgs = $matches[0].Trim() }
+          else { Write-Error "Could not extract arguments from input."; exit 1 }
 
-      - name: 📤 Upload Installation Logs
-        if: always() # WAJIB: Jalankan ini bahkan jika langkah sebelumnya gagal
-        uses: actions/upload-artifact@v4
-        with:
-          name: crd-install-logs
-          path: C:\AiraaCheisyaa\logs\
+          $crdExePath = (Get-ChildItem -Path "C:\Program Files\Google" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $crdExePath) {
+            Write-Error "FATAL: remoting_start_host.exe not found post-restart."
+            exit 1
+          }
+
+          $PIN = "123456"
+          $finalArgs = "$crdArgs -pin=`"$PIN`""
+          
+          Write-Host "Starting CRD host directly in AiraaCheisyaa session..."
+          Start-Process -FilePath $crdExePath -ArgumentList $finalArgs
+
+          Start-Sleep -Seconds 10
+          Write-Host "----------------------------------------"
+          Write-Host "Windows User: AiraaCheisyaa (Verified)"
+          Write-Host "CRD PIN: $PIN"
+          Write-Host "----------------------------------------"
+
+      - name: Keep-Runner-Alive
+        shell: pwsh
+        run: |
+          Write-Host "Workflow will now stay running up to the job timeout."
+          Start-Sleep -Seconds 258000
