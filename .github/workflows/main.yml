@@ -63,36 +63,43 @@ jobs:
       - name: Rename Runner User to AiraaCheisyaa and Set Password
         shell: pwsh
         run: |
-          # SETELAH instalasi berhasil, baru ubah identitas pengguna
           $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
           Write-Host "Renaming 'runneradmin' to 'AiraaCheisyaa'..."
           Rename-LocalUser -Name "runneradmin" -NewName "AiraaCheisyaa"
-          
           Write-Host "Setting password for 'AiraaCheisyaa'..."
           Set-LocalUser -Name "AiraaCheisyaa" -Password $securePass
-
           echo "WINDOWS_PASSWORD=$password" >> $env:GITHUB_ENV
 
       - name: Start CRD in Current Session (now as AiraaCheisyaa)
         shell: pwsh
         run: |
-          Write-Host "Verifying current user environment..."
-          Write-Host "Current user reported by env: $env:UserName"
-
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $ArgsPattern = '\s+--code.+'
           if ($FullCommand -match $ArgsPattern) { $crdArgs = $matches[0].Trim() }
           else { Write-Error "Could not extract arguments from input."; exit 1 }
 
-          # FIX: Mengganti -Recuse dengan -Recurse
-          $crdExePath = (Get-ChildItem -Path "C:\Program Files\Google" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          # FIX: Cari di kedua lokasi (64-bit dan 32-bit) untuk ketahanan
+          $searchPaths = @(
+              "C:\Program Files\Google",
+              "C:\Program Files (x86)\Google"
+          )
+          $crdExePath = $null
+          foreach ($path in $searchPaths) {
+              if (Test-Path $path) {
+                  $foundFile = Get-ChildItem -Path $path -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                  if ($null -ne $foundFile) {
+                      $crdExePath = $foundFile.FullName
+                      Write-Host "Found CRD executable at: $crdExePath"
+                      break
+                  }
+              }
+          }
+
           if (-not $crdExePath) {
-            Write-Error "FATAL: remoting_start_host.exe not found after installation."
+            Write-Error "FATAL: remoting_start_host.exe not found in any known location after installation."
             exit 1
           }
-          Write-Host "Found CRD executable at: $crdExePath"
 
           $PIN = "123456"
           $finalArgs = "$crdArgs -pin=`"$PIN`""
