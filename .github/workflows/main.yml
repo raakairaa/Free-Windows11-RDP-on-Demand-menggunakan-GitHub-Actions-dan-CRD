@@ -48,40 +48,7 @@ jobs:
             New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
           }
 
-      - name: Set custom Windows wallpaper (For Current User)
-        shell: pwsh
-        run: |
-          $wallpaperUrl = "https://files.catbox.moe/dqwzph.png"
-          $wallpaperPath = "C:\AiraaCheisyaa\wallpaper.png"
-          Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
-          Add-Type -TypeDefinition @"
-          using System.Runtime.InteropServices;
-          public class Wallpaper {
-            [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-            public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-          }
-          "@
-          [Wallpaper]::SystemParametersInfo(20, 0, $wallpaperPath, 3)
-          Write-Host "Wallpaper telah diatur untuk sesi saat ini."
-
-      - name: Download Debian ISO (uses cache)
-        shell: pwsh
-        run: |
-          $isoUrl = "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/${{ env.DEBIAN_ISO_FILENAME }}"
-          $cachedIsoPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "${{ env.DEBIAN_ISO_FILENAME }}"
-          $finalIsoPath = "C:\AiraaCheisyaa\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
-          if (Test-Path $cachedIsoPath) {
-              Write-Host "ISO found in cache. Copying to destination..."
-              Copy-Item -Path $cachedIsoPath -Destination $finalIsoPath -Force
-          } else {
-              Write-Host "ISO not found in cache. Starting download..."
-              Invoke-WebRequest -Uri $isoUrl -OutFile $cachedIsoPath -UseBasicParsing
-              Copy-Item -Path $cachedIsoPath -Destination $finalIsoPath -Force
-          }
-          Write-Host "Debian ISO is ready at $finalIsoPath"
-
-      - name: Install Pre-requisite Software & Verify CRD Installation
-        id: install_and_verify # Memberi ID pada langkah ini
+      - name: Install Pre-requisite Software & Enable CRD Install Logging
         shell: pwsh
         run: |
           $vscodePath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "vscode_installer.exe"
@@ -94,97 +61,40 @@ jobs:
           if (-not (Test-Path $vboxPath)) { Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18-162988-Win.exe" -OutFile $vboxPath }
           Start-Process -FilePath $vboxPath -ArgumentList '--silent --ignore-reboot' -Wait
 
-          # Install CRD
+          # Install CRD dengan logging verbose diaktifkan
           if (-not (Test-Path $crdPath)) { Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crdPath }
-          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart" -Wait
-          
-          # --- LOGIKA POLLING DENGAN TIMEOUT ---
-          Write-Host "Verifying CRD installation by polling for remoting_start_host.exe..."
-          $timeout = New-TimeSpan -Minutes 2
-          $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-          $crdExePath = $null
-          
-          while ($stopwatch.Elapsed -lt $timeout) {
-              $crdExeFile = Get-ChildItem -Path "C:\Program Files\Google" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($null -ne $crdExeFile) {
-                  $crdExePath = $crdExeFile.FullName
-                  Write-Host "CRD host found at: $crdExePath"
-                  break
-              }
-              Write-Host "File not found yet, waiting 5 seconds before retrying..."
-              Start-Sleep -Seconds 5
-          }
+          $logPath = "C:\AiraaCheisyaa\logs\crd_install.log"
+          Write-Host "Starting CRD installation with verbose logging to $logPath..."
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart /L*v `"$logPath`"" -Wait
+          Write-Host "msiexec process has finished."
 
-          if ($null -eq $crdExePath) {
-              Write-Error "FATAL: CRD installation verification timed out after 2 minutes. The file remoting_start_host.exe was not found."
+      - name: 🔍 Run Post-Installation Diagnostics
+        shell: pwsh
+        run: |
+          Write-Host "--- Verifying Installation Contents ---"
+          Write-Host ""
+          Write-Host "Listing top-level directories in C:\Program Files..."
+          Get-ChildItem -Path "C:\Program Files" -Directory | ForEach-Object { Write-Host " -> $($_.Name)" }
+          Write-Host ""
+          Write-Host "Listing top-level directories in C:\Program Files (x86)..."
+          Get-ChildItem -Path "C:\Program Files (x86)" -Directory | ForEach-Object { Write-Host " -> $($_.Name)" }
+          Write-Host ""
+
+          $crdExeFile = Get-ChildItem -Path "C:\Program Files", "C:\Program Files (x86)" -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -ne $crdExeFile) {
+              Write-Host "SUCCESS: Found remoting_start_host.exe at $($crdExeFile.FullName)"
+          } else {
+              Write-Error "FAILURE: Did not find remoting_start_host.exe anywhere."
+              # Keluar dengan kode galat untuk memastikan workflow berhenti jika file tidak ada
               exit 1
           }
 
-          # Mengirimkan path yang ditemukan ke langkah berikutnya
-          echo "crd_exe_path=$crdExePath" >> $env:GITHUB_OUTPUT
+      # Langkah-langkah lain sengaja dilewati untuk fokus pada diagnostik
+      # ...
 
-      - name: '🚀 Apply Performance Tweaks & Optimizations'
-        shell: pwsh
-        run: |
-          Write-Host "Applying system optimizations for a smoother RDP experience..."
-          try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
-          try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
-          Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
-          Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
-          Write-Host "System optimizations applied successfully!"
-
-      - name: Start CRD in Current User Context (AiraaCheisyaa)
-        shell: pwsh
-        run: |
-          $FullCommand = '${{ github.event.inputs.crd_full_command }}'
-          $ArgsPattern = '\s+--code.+'
-          if ($FullCommand -match $ArgsPattern) {
-            $crdArgs = $matches[0].Trim()
-            Write-Host "CRD arguments extracted successfully."
-          } else {
-            Write-Error "Could not extract arguments from the input command. Please paste the full command."
-            exit 1
-          }
-
-          # Mengambil path CRD yang sudah diverifikasi dari langkah sebelumnya
-          $crdExePath = "${{ steps.install_and_verify.outputs.crd_exe_path }}"
-          Write-Host "Using verified CRD path: $crdExePath"
-
-          $PIN = "123456"
-          $finalArgs = "$crdArgs -pin=`"$PIN`""
-          
-          Write-Host "Starting CRD host directly in the current user session..."
-          Start-Process -FilePath $crdExePath -ArgumentList $finalArgs -Wait
-
-          Write-Host "CRD host process started. Waiting for initialization..."
-          Start-Sleep -Seconds 10
-          
-          Write-Host "----------------------------------------"
-          Write-Host "Windows User: AiraaCheisyaa"
-          Write-Host "CRD PIN: $PIN"
-          Write-Host "Debian ISO Path: C:\AiraaCheisyaa\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
-          Write-Host "----------------------------------------"
-
-      - name: Keep-Runner-Alive
-        shell: pwsh
-        run: |
-          Write-Host "Workflow will now stay running up to the job timeout."
-          Start-Sleep -Seconds 258000
-
-      - name: 🧹 Run Full System Cleanup
-        if: always()
-        shell: pwsh
-        run: |
-          Write-Host "--- Starting Full System Cleanup ---"
-          Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path C:\AiraaCheisyaa -Recurse -Force -ErrorAction SilentlyContinue
-          $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
-          if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
-          Remove-Item -Path "C:\ProgramData\Google\Chrome Remote Desktop" -Recurse -Force -ErrorAction SilentlyContinue
-          powercfg /s 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
-          Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
-          Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
-          Start-Service wuauserv -ErrorAction SilentlyContinue
-          Start-Service WSearch -ErrorAction SilentlyContinue
-          Write-Host "--- Cleanup Finished ---"
+      - name: 📤 Upload Installation Logs
+        if: always() # WAJIB: Jalankan ini bahkan jika langkah sebelumnya gagal
+        uses: actions/upload-artifact@v4
+        with:
+          name: crd-install-logs
+          path: C:\AiraaCheisyaa\logs\
