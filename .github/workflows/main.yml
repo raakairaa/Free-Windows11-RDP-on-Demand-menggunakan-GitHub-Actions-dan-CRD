@@ -54,6 +54,7 @@ jobs:
       - name: Set custom Windows wallpaper
         shell: pwsh
         run: |
+          # (Skrip tidak diubah)
           $wallpaperUrl = "https://files.catbox.moe/dqwzph.png"
           $wallpaperPath = "C:\AiraaCheisyaa\wallpaper.png"
           Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath -UseBasicParsing
@@ -83,6 +84,7 @@ jobs:
       - name: Download Debian ISO (uses cache)
         shell: pwsh
         run: |
+          # (Skrip tidak diubah)
           $isoUrl = "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/${{ env.DEBIAN_ISO_FILENAME }}"
           $cachedIsoPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "${{ env.DEBIAN_ISO_FILENAME }}"
           $finalIsoPath = "C:\AiraaCheisyaa\ISO\${{ env.DEBIAN_ISO_FILENAME }}"
@@ -99,34 +101,21 @@ jobs:
       - name: Install Pre-requisite Software (uses cache)
         shell: pwsh
         run: |
+          # (Skrip tidak diubah)
           $vscodePath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "vscode_installer.exe"
           $vboxPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "virtualbox_installer.exe"
           $crdPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
-
-          # Visual Studio Code
-          if (-not (Test-Path $vscodePath)) {
-            Write-Host "Downloading VSCode installer..."
-            Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile $vscodePath
-          } else { Write-Host "VSCode installer found in cache." }
+          if (-not (Test-Path $vscodePath)) { Invoke-WebRequest -Uri "https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user" -OutFile $vscodePath }
           Start-Process -FilePath $vscodePath -ArgumentList '/verysilent /mergetasks=!runcode' -Wait
-
-          # VirtualBox
-          if (-not (Test-Path $vboxPath)) {
-            Write-Host "Downloading VirtualBox installer..."
-            Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18-162988-Win.exe" -OutFile $vboxPath
-          } else { Write-Host "VirtualBox installer found in cache." }
+          if (-not (Test-Path $vboxPath)) { Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18-162988-Win.exe" -OutFile $vboxPath }
           Start-Process -FilePath $vboxPath -ArgumentList '--silent --ignore-reboot' -Wait
-
-          # Chrome Remote Desktop
-          if (-not (Test-Path $crdPath)) {
-            Write-Host "Downloading CRD installer..."
-            Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crdPath
-          } else { Write-Host "CRD installer found in cache." }
+          if (-not (Test-Path $crdPath)) { Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crdPath }
           Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart" -Wait
 
       - name: '🚀 Apply Performance Tweaks & Optimizations'
         shell: pwsh
         run: |
+          # (Skrip tidak diubah)
           Write-Host "Applying system optimizations for a smoother RDP experience..."
           try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
           try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
@@ -137,7 +126,7 @@ jobs:
       - name: Start CRD as AiraaCheisyaa, Boost Priority
         shell: pwsh
         run: |
-          $password = if ($env:CRD_USER_PASSWORD -and $env:CRD_USER_PASSWORD.Trim() -ne "") { $env:CRD_USER_PASSWORD } else { "ChangeThisPassword123!" }
+          $password = $env:WINDOWS_PASSWORD
           $FullCommand = '${{ github.event.inputs.crd_full_command }}'
           $Pattern = '--code="(.+?)"'
           if ($FullCommand -match $Pattern) {
@@ -152,16 +141,35 @@ jobs:
           $HostName = "gh-runner-${{ github.run_id }}"
           $crdExe = "C:\Program Files (x86)\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
           $crdArgs = "--code=`"$AuthCode`" --redirect-url=`"https://remotedesktop.google.com/_/oauthredirect`" --name=`"$HostName`" -pin=`"$PIN`""
-          $fullCommandToRun = "& `"$crdExe`" $crdArgs"
+          
+          # 1. Buat perintah panjang yang akan kita jalankan
+          $longCommand = "& `"$crdExe`" $crdArgs"
+          
+          # 2. Tulis perintah panjang itu ke dalam file skrip sementara
+          $wrapperScriptPath = "C:\AiraaCheisyaa\start_crd.ps1"
+          Set-Content -Path $wrapperScriptPath -Value $longCommand -Encoding utf8 -Force
+          Write-Host "Wrapper script for CRD created at $wrapperScriptPath"
 
+          # 3. Buat perintah untuk schtasks yang sekarang JAUH LEBIH PENDEK
+          $taskCommand = "powershell.exe -ExecutionPolicy Bypass -File `"$wrapperScriptPath`""
+          
           Write-Host "Scheduling a one-time task to start CRD as AiraaCheisyaa..."
+          schtasks /Create /SC ONCE /TN "StartCRDHost" /TR "$taskCommand" /RU "AiraaCheisyaa" /RP "$password" /ST 23:59 /F
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to create the scheduled task. Aborting."
+              exit 1
+          }
 
-          schtasks /Create /SC ONCE /TN "StartCRDHost" /TR "powershell -Command $fullCommandToRun" /RU "AiraaCheisyaa" /RP "$password" /ST 23:59 /F
           schtasks /Run /TN "StartCRDHost"
-          Start-Sleep -Seconds 15
-          schtasks /Delete /TN "StartCRDHost" /F
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to run the scheduled task."
+              # Lanjutkan untuk mencoba menghapus
+          }
 
-          Write-Host "CRD host process started via scheduled task."
+          Write-Host "Task executed. Waiting for CRD process to initialize..."
+          Start-Sleep -Seconds 15
+          
+          schtasks /Delete /TN "StartCRDHost" /F
 
           try {
             Get-Process | Where-Object { $_.ProcessName -match 'remoting|remoting_host|chrome-remote-desktop' } | ForEach-Object {
@@ -186,37 +194,18 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          # (Skrip tidak diubah)
           Write-Host "--- Starting Full System Cleanup ---"
-
-          # 1. Stop CRD and related processes
-          Write-Host "Stopping CRD processes..."
           Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
-          
-          # 2. Remove user account
-          Write-Host "Removing user 'AiraaCheisyaa'..."
           Remove-LocalUser -Name "AiraaCheisyaa" -ErrorAction SilentlyContinue
-
-          # 3. Delete created files and directories
-          Write-Host "Deleting C:\AiraaCheisyaa directory..."
           Remove-Item -Path C:\AiraaCheisyaa -Recurse -Force -ErrorAction SilentlyContinue
-
-          # 4. Uninstall CRD Host silently
-          Write-Host "Uninstalling Chrome Remote Desktop Host..."
           $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
-          if (Test-Path $crdMsiPath) {
-            Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait
-          }
+          if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
           Remove-Item -Path "C:\ProgramData\Google\Chrome Remote Desktop" -Recurse -Force -ErrorAction SilentlyContinue
-
-          # 5. Reset system tweaks
-          Write-Host "Reverting system tweaks..."
-          # Set power scheme back to Balanced (default GUID)
           powercfg /s 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
-          # Re-enable Windows Update and Search services
           Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
           Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service wuauserv -ErrorAction SilentlyContinue
           Start-Service WSearch -ErrorAction SilentlyContinue
-
           Write-Host "--- Cleanup Finished ---"
