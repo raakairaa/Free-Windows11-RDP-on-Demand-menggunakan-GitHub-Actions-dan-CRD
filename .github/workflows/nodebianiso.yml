@@ -1,0 +1,114 @@
+name: No install Debian iso
+
+on:
+  workflow_dispatch:
+    inputs:
+      crd_full_command:
+        description: 'Salin dan tempel SELURUH perintah dari halaman CRD Headless (CMD atau PowerShell)'
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 10080 # diperpanjang, max 7 hari
+    env:
+      INSTALLER_CACHE_PATH: C:\cached-installers
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Dirs and Install Software
+        shell: pwsh
+        run: |
+          # Siapkan Direktori Kerja
+          New-Item -Path C:\Workspace -ItemType Directory -Force | Out-Null
+          if (-not (Test-Path "${{ env.INSTALLER_CACHE_PATH }}")) {
+            New-Item -Path "${{ env.INSTALLER_CACHE_PATH }}" -ItemType Directory -Force | Out-Null
+          }
+
+          # Instal Perangkat Lunak yang Diperlukan
+          Write-Host "Installing required software..."
+          $vboxPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "virtualbox_installer.exe"
+          $crdPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
+
+          if (-not (Test-Path $vboxPath)) { Invoke-WebRequest -Uri "https://download.virtualbox.org/virtualbox/7.0.18/VirtualBox-7.0.18-162988-Win.exe" -OutFile $vboxPath }
+          Start-Process -FilePath $vboxPath -ArgumentList '--silent --ignore-reboot' -Wait
+          
+          if (-not (Test-Path $crdPath)) { Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile $crdPath }
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$crdPath`" /qn /norestart" -Wait
+          
+          Write-Host "Waiting for CRD installation to finalize..."
+          Start-Sleep -Seconds 15
+
+      - name: 🚀 Apply Performance Tweaks & Optimizations
+        shell: pwsh
+        run: |
+          Write-Host "Applying system optimizations for a smoother RDP experience..."
+          try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
+          try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
+          Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
+          Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
+          Write-Host "System optimizations applied successfully!"
+
+      - name: Start CRD in Runner Session
+        shell: pwsh
+        run: |
+          $FullCommand = '${{ github.event.inputs.crd_full_command }}'
+          $ArgsPattern = '\s+--code.+'
+          if ($FullCommand -match $ArgsPattern) { $crdArgs = $matches[0].Trim() }
+          else { Write-Error "Could not extract arguments from input."; exit 1 }
+
+          $searchPaths = @( "C:\Program Files\Google", "C:\Program Files (x86)\Google" )
+          $crdExePath = $null
+          foreach ($path in $searchPaths) {
+              if (Test-Path $path) {
+                  $foundFile = Get-ChildItem -Path $path -Filter "remoting_start_host.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                  if ($null -ne $foundFile) {
+                      $crdExePath = $foundFile.FullName
+                      break
+                  }
+              }
+          }
+
+          if (-not $crdExePath) {
+            Write-Error "FATAL: remoting_start_host.exe not found after installation."
+            exit 1
+          }
+          Write-Host "Found CRD executable at: $crdExePath"
+          
+          $PIN = "123456"
+          $finalArgs = "$crdArgs -pin=`"$PIN`""
+          
+          Write-Host "Starting CRD host directly in the current runner session..."
+          Start-Process -FilePath $crdExePath -ArgumentList $finalArgs
+
+          Start-Sleep -Seconds 10
+
+      - name: Keep-Runner-Alive
+        shell: pwsh
+        run: |
+          Write-Host "----------------------------------------"
+          Write-Host "Windows User: runneradmin (Default)"
+          Write-Host "CRD PIN: 123456"
+          Write-Host "----------------------------------------"
+          Write-Host "Workflow will now stay running up to the job timeout."
+          Start-Sleep -Seconds 604800   # 7 hari penuh
+
+      - name: 🧹 Run Full System Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "--- Starting Full System Cleanup ---"
+          Stop-Process -Name "remoting_*" -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name "chrome-remote-desktop" -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path C:\Workspace -Recurse -Force -ErrorAction SilentlyContinue
+          $crdMsiPath = Join-Path "${{ env.INSTALLER_CACHE_PATH }}" "crd.msi"
+          if (Test-Path $crdMsiPath) { Start-Process msiexec.exe -ArgumentList "/x `"$crdMsiPath`" /qn" -Wait }
+          Remove-Item -Path "C:\ProgramData\Google\Chrome Remote Desktop" -Recurse -Force -ErrorAction SilentlyContinue
+          powercfg /s 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
+          Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
+          Set-Service -Name WSearch -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service wuauserv -ErrorAction SilentlyContinue
+          Start-Service WSearch -ErrorAction SilentlyContinue
+          Write-Host "--- Cleanup Finished ---"
