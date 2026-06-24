@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     timeout-minutes: 10080 # diperpanjang, max 7 hari
     env:
       INSTALLER_CACHE_PATH: C:\cached-installers
@@ -40,16 +40,6 @@ jobs:
           
           Write-Host "Waiting for CRD installation to finalize..."
           Start-Sleep -Seconds 15
-
-      - name: 🚀 Apply Performance Tweaks & Optimizations
-        shell: pwsh
-        run: |
-          Write-Host "Applying system optimizations for a smoother RDP experience..."
-          try { powercfg /s SCHEME_MIN } catch { Write-Warning "powercfg tweak failed: $_" }
-          try { Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name 'VisualFxSetting' -Value 2 -ErrorAction SilentlyContinue } catch {}
-          Get-Service -Name wuauserv -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
-          Get-Service -Name WSearch -ErrorAction SilentlyContinue | ForEach-Object { Stop-Service -InputObject $_ -Force -ErrorAction SilentlyContinue; Set-Service -Name $_.Name -StartupType Disabled }
-          Write-Host "System optimizations applied successfully!"
 
       - name: Start CRD in Runner Session
         shell: pwsh
